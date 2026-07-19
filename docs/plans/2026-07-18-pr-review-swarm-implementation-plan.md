@@ -24,6 +24,7 @@
 | F | watchdog 的 `schedule` cron 间隔 | 文档只给了"超时阈值默认 30 分钟"（L249），未给出扫描频率 | 提案每 10 分钟一次（`*/10 * * * *`），在超时阈值内至少有 2-3 次扫描机会 |
 | G | 两个 reusable workflow 文件如何提供 "prepare/analyze/publish/finalize" 与 "watchdog" 两套触发 | 文档 L247："与 prepare/analyze/publish/finalize **同源但独立触发**" | 拆成 `reusable-pr-review.yml`（5 个 Job，`pull_request_target`/`workflow_dispatch` 触发）和 `reusable-pr-review-watchdog.yml`（1 个 Job，`workflow_call` 供目标仓库的 `schedule` workflow 调用），两者 `uses:` 同一个 `action/action.yml`，仅 `entrypoint` 输入不同 |
 | H | Phase 1→2 门槛所需的"预设召回率和误报上限"数值 | 文档 L323 只说"达到预设的问题召回率和误报上限"，未给数值 | 这是业务判断，不是实现细节，本计划不代填数字，作为 Phase 1 退出的人工检查项列出，需要您在真实/沙盒仓库跑 shadow mode 后自行拍板 |
+| I | 轻量状态清理（`converted_to_draft`/`closed`）是否与 status-start 共用同一个 action 入口 | 文档 L39："轻量状态清理复用 status-start 的入口和权限……不需要额外 Job 或权限声明"——字面意思是复用同一个 entrypoint，但 Task 0.1/1.4b 把它实现为独立的 `lightweight-cleanup` entrypoint/文件 | **确认保留独立 entrypoint**：文档 L39 的核心约束是"不需要额外 Job 或权限声明"，独立 entrypoint 只是同一个 Job 内的另一个 `entrypoint` 输入值，不产生额外 Job/权限，满足文档实质要求；独立文件写法比在 status-start.ts 内部按事件类型分支更清晰。此项为 Round 2 独立代码审核发现并经您确认，之前"未发现文档内部矛盾"的表述有误，特此补记。 |
 
 以上任何一项如果您有不同意见，请在开工前告诉我；否则默认按上表执行。**除上表外，本计划严格对应设计文档条款，未发现文档内部矛盾**（如实现中发现具体的、可指出行号的矛盾，会停下来向您报告，不会绕过设计意图自行"修正"）。
 

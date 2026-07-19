@@ -1,0 +1,11 @@
+{
+  "maxCandidateFindingsPerAgentPerShard": 30,
+  "maxSkillRequestsPerRun": 3,
+  "maxVerifierCallsPerRun": 200,
+  "maxFinalFindingsPerRun": 200,
+  "maxReviewBatchesPerRun": 20,
+  "maxPublishRetries": 5,
+  "watchdogStaleThresholdMinutes": 30,
+  "maxCommitsPerPrForWatchdogScan": 250,
+  "maxPrFilesPerPage": 3000
+}

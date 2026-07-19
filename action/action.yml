@@ -1,0 +1,9 @@
+name: 'PR Review Swarm'
+description: 'Central action providing status-start/prepare/analyze/publish/status-finalize/watchdog entrypoints'
+inputs:
+  entrypoint:
+    description: 'One of: status-start, prepare, analyze, publish, status-finalize, watchdog, lightweight-cleanup'
+    required: true
+runs:
+  using: 'node20'
+  main: 'dist/index.js'

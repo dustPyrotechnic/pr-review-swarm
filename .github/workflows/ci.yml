@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-typecheck-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: action
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+
+  build-dist-no-drift:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: action
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - run: npm run build
+      - run: git add -A -- dist && git diff --cached --exit-code -- dist
+
+  schema-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Validate schemas and fixtures
+        run: |
+          if ! ls schemas/*.schema.json >/dev/null 2>&1; then
+            echo "no schemas yet, skipping"
+            exit 0
+          fi
+          ajv="npx --yes --package=ajv-cli@5.0.0 --package=ajv-formats@3.0.1 -- ajv"
+          $ajv compile -c ajv-formats -s "schemas/*.schema.json" --spec=draft7
+          for schema in schemas/*.schema.json; do
+            name=$(basename "$schema" .schema.json)
+            valid_dir="schemas/fixtures/$name"
+            [ -d "$valid_dir" ] || continue
+            for fixture in "$valid_dir"/valid-*.json; do
+              [ -e "$fixture" ] || continue
+              echo "expect valid: $fixture"
+              $ajv validate -c ajv-formats -s "$schema" -d "$fixture" --spec=draft7
+            done
+            for fixture in "$valid_dir"/invalid-*.json; do
+              [ -e "$fixture" ] || continue
+              echo "expect invalid: $fixture"
+              if $ajv validate -c ajv-formats -s "$schema" -d "$fixture" --spec=draft7; then
+                echo "::error::fixture $fixture was expected to fail validation but passed"
+                exit 1
+              fi
+            done
+          done
+
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run actionlint
+        env:
+          ACTIONLINT_VERSION: '1.7.12'
+        run: |
+          bash <(curl -fsSL "https://raw.githubusercontent.com/rhysd/actionlint/v${ACTIONLINT_VERSION}/scripts/download-actionlint.bash") "$ACTIONLINT_VERSION"
+          ./actionlint -color
+
+  forbidden-pr-head-ref-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject PR head ref checkouts
+        run: |
+          if grep -RnE 'ref:\s*.*github\.event\.pull_request\.head' .github/workflows; then
+            echo "::error::检测到疑似 checkout PR head 的 ref，禁止合并"
+            exit 1
+          fi

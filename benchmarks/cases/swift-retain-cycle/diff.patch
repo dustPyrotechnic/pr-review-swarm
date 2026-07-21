@@ -1,0 +1,31 @@
+diff --git a/Sources/App/ViewController.swift b/Sources/App/ViewController.swift
+index abc123..def456 100644
+--- a/Sources/App/ViewController.swift
++++ b/Sources/App/ViewController.swift
+@@ -10,6 +10,12 @@ class ViewController: UIViewController {
+         setupUI()
+     }
+     
++    func startDataLoading() {
++        let loader = DataLoader()
++        loader.delegate = self
++        loader.load()
++    }
++    
+     func setupUI() {
+         let label = UILabel()
+         label.text = "Hello"
+@@ -20,3 +26,12 @@ class ViewController: UIViewController {
+ class DataLoader {
+     var delegate: DataLoaderDelegate?
+     
++    func load() {
++        DispatchQueue.global().async {
++            let data = self.fetchData()
++            DispatchQueue.main.async {
++                self.delegate?.dataDidLoad(data)
++            }
++        }
++    }
++    
+     func fetchData() -> Data {

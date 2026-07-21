@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pr-review-swarm/schemas/expected-findings.schema.json",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["path", "line", "category", "must_find"],
+    "properties": {
+      "path": { "type": "string", "minLength": 1 },
+      "line": { "type": "integer", "minimum": 1 },
+      "category": { "type": "string", "minLength": 1 },
+      "must_find": { "type": "boolean" }
+    }
+  }
+}

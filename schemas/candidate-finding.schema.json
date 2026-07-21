@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pr-review-swarm/schemas/candidate-finding.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id", "path", "line", "side", "severity", "confidence", "category",
+    "title", "evidence", "impact", "suggestion",
+    "introduced_by_pr", "source_agent"
+  ],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "path": { "type": "string", "minLength": 1 },
+    "line": { "type": "integer", "minimum": 1 },
+    "side": { "type": "string", "enum": ["LEFT", "RIGHT"] },
+    "start_line": { "type": "integer", "minimum": 1 },
+    "start_side": { "type": "string", "enum": ["LEFT", "RIGHT"] },
+    "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
+    "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+    "category": { "type": "string", "minLength": 1 },
+    "title": { "type": "string", "minLength": 1 },
+    "evidence": { "type": "string", "minLength": 1 },
+    "impact": { "type": "string", "minLength": 1 },
+    "suggestion": { "type": "string", "minLength": 1 },
+    "introduced_by_pr": { "type": "boolean" },
+    "cross_file_causal_claim": {
+      "type": "boolean",
+      "description": "true 表示该问题的 introduced_by_pr 判断依赖跨文件调用链，必须交给独立 verifier 复核（设计文档 L87）"
+    },
+    "causal_evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "line"],
+        "properties": {
+          "path": { "type": "string" },
+          "line": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "source_agent": { "type": "string", "minLength": 1 }
+  },
+  "if": {
+    "anyOf": [
+      { "required": ["start_line"] },
+      { "required": ["start_side"] }
+    ]
+  },
+  "then": {
+    "required": ["start_line", "start_side"]
+  }
+}

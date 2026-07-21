@@ -1,0 +1,52 @@
+{
+  "identity_tuple": {
+    "head_repo": "owner/repo",
+    "head_sha": "abc123",
+    "base_repo": "owner/repo",
+    "base_ref": "main",
+    "base_sha": "def456",
+    "merge_base_sha": "ghi789"
+  },
+  "shards": [
+    {
+      "id": "shard-1",
+      "files": [
+        {
+          "path": "src/main.swift",
+          "hunks": [
+            {
+              "lines": [
+                {"type": "add", "content": "  let x = 1"},
+                {"type": "context", "content": "  print(x)"}
+              ],
+              "oldStart": 0,
+              "oldLines": 0,
+              "newStart": 1,
+              "newLines": 2
+            }
+          ],
+          "contextContents": {}
+        }
+      ]
+    }
+  ],
+  "coverage_manifest": {
+    "files": [
+      {
+        "path": "src/main.swift",
+        "treatment": "reviewed",
+        "shard_id": "shard-1",
+        "status": "success",
+        "agents": ["generic-correctness"]
+      }
+    ],
+    "shards_complete": true,
+    "hard_limit_hit": false,
+    "pulls_files_pagination_truncated": false,
+    "missing_patch_files": [],
+    "token_usage": {
+      "prompt_tokens": 100,
+      "completion_tokens": 50
+    }
+  }
+}

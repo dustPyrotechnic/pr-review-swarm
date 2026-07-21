@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**设计阶段** —— 本仓库目前只包含设计文档，尚未开始实现。完整设计见 [`docs/plans/2026-07-13-pr-review-swarm-design.md`](docs/plans/2026-07-13-pr-review-swarm-design.md)。
+**Phase 1（shadow mode，只读）实现中** —— 六个入口（status-start/prepare/analyze/publish/status-finalize/watchdog）及 lightweight-cleanup 已全部实现并有单测覆盖；`publish` 目前只写 job summary，不调用任何 GitHub 写 API。完整设计见 [`docs/plans/2026-07-13-pr-review-swarm-design.md`](docs/plans/2026-07-13-pr-review-swarm-design.md)，实施计划见 [`docs/plans/2026-07-18-pr-review-swarm-implementation-plan.md`](docs/plans/2026-07-18-pr-review-swarm-implementation-plan.md)。
 
 ## 目录结构（计划）
 
@@ -20,7 +20,9 @@
 
 ## 目标仓库如何接入（计划中的用法）
 
-目标仓库只需要安装一个小型监听器 workflow，固定引用中央仓库某个 commit SHA：
+目标仓库需要安装两个小型监听器 workflow，都固定引用中央仓库某个 commit SHA：一个响应 PR 事件触发常规审核，一个按 schedule 触发 watchdog 清理超时的 Check。
+
+### 常规审核监听器
 
 ```yaml
 # .github/workflows/pr-review.yml（目标仓库）
@@ -36,8 +38,28 @@ on:
 jobs:
   review:
     uses: <org>/pr-review-swarm/.github/workflows/reusable-pr-review.yml@<pinned-commit-sha>
+    with:
+      pr_number: ${{ github.event.pull_request.number || inputs.pr_number }}
+      model: 'deepseek-chat' # 需与 action/config/allowed-models.json 中的白名单一致
     secrets:
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+```
+
+### Watchdog 监听器
+
+每 10 分钟扫描一次超时未终结的 Check（默认超时阈值 30 分钟，见 `action/config/central-limits.json`），并支持手动触发排障：
+
+```yaml
+# .github/workflows/pr-review-watchdog.yml（目标仓库）
+name: PR Review Swarm Watchdog
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  watchdog:
+    uses: <org>/pr-review-swarm/.github/workflows/reusable-pr-review-watchdog.yml@<pinned-commit-sha>
 ```
 
 具体权限拆分、Job 结构和安全模型见设计文档。

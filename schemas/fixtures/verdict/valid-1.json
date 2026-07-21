@@ -1,0 +1,13 @@
+{
+  "identity_tuple": {
+    "head_repo": "owner/repo",
+    "head_sha": "abc123",
+    "base_repo": "owner/repo",
+    "base_ref": "main",
+    "base_sha": "def456",
+    "merge_base_sha": "ghi789"
+  },
+  "verdict": "pass",
+  "review_set_id": "run-42-1",
+  "final_findings_count": 0
+}

@@ -1,0 +1,19 @@
+{
+  "files": [
+    {
+      "path": "src/main.swift",
+      "treatment": "reviewed",
+      "shard_id": "shard-1",
+      "status": "success",
+      "agents": ["generic-correctness", "generic-security"]
+    }
+  ],
+  "shards_complete": true,
+  "hard_limit_hit": false,
+  "pulls_files_pagination_truncated": false,
+  "missing_patch_files": [],
+  "token_usage": {
+    "prompt_tokens": 1000,
+    "completion_tokens": 200
+  }
+}

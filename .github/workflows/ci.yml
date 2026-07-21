@@ -45,6 +45,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+      - name: expert-output.schema.json must match central-limits.json (no drift)
+        run: |
+          node scripts/generate-expert-output-schema.mjs
+          git diff --exit-code -- schemas/expert-output.schema.json
       - name: Validate schemas and fixtures
         run: |
           if ! ls schemas/*.schema.json >/dev/null 2>&1; then
@@ -57,15 +61,23 @@ jobs:
             name=$(basename "$schema" .schema.json)
             valid_dir="schemas/fixtures/$name"
             [ -d "$valid_dir" ] || continue
+            # Other schema files may be $ref'd by $schema (e.g. expert-output ->
+            # candidate-finding), so pass them all as -r references (excluding
+            # $schema itself to avoid a duplicate-id error).
+            refs=()
+            for other in schemas/*.schema.json; do
+              [ "$other" = "$schema" ] && continue
+              refs+=(-r "$other")
+            done
             for fixture in "$valid_dir"/valid-*.json; do
               [ -e "$fixture" ] || continue
               echo "expect valid: $fixture"
-              $ajv validate -c ajv-formats -s "$schema" -d "$fixture" --spec=draft7
+              $ajv validate -c ajv-formats -s "$schema" "${refs[@]}" -d "$fixture" --spec=draft7
             done
             for fixture in "$valid_dir"/invalid-*.json; do
               [ -e "$fixture" ] || continue
               echo "expect invalid: $fixture"
-              if $ajv validate -c ajv-formats -s "$schema" -d "$fixture" --spec=draft7; then
+              if $ajv validate -c ajv-formats -s "$schema" "${refs[@]}" -d "$fixture" --spec=draft7; then
                 echo "::error::fixture $fixture was expected to fail validation but passed"
                 exit 1
               fi

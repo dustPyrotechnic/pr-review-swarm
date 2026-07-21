@@ -1,0 +1,16 @@
+diff --git a/pkg/service/user.go b/pkg/service/user.go
+index 111aaa..222bbb 100644
+--- a/pkg/service/user.go
++++ b/pkg/service/user.go
+@@ -15,6 +15,11 @@ func GetUser(id int) (*User, error) {
+        return user, nil
+ }
+ 
++func DeleteUser(id int) {
++       db.Exec("DELETE FROM users WHERE id = ?", id)
++       log.Printf("user %d deleted", id)
++}
++
+ func ListUsers() ([]*User, error) {
+        rows, err := db.Query("SELECT id, name FROM users")
+        if err != nil {

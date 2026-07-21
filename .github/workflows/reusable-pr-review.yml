@@ -1,0 +1,128 @@
+name: PR Review Swarm (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        description: 'Pull request number (target repo listener resolves this from the triggering event or workflow_dispatch input)'
+        required: true
+        type: number
+      model:
+        description: 'Allow-listed DeepSeek model name used by analyze'
+        required: true
+        type: string
+    secrets:
+      DEEPSEEK_API_KEY:
+        required: true
+
+concurrency:
+  group: pr-review-swarm-${{ github.repository }}-${{ inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  status-start:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: write
+    outputs:
+      gate_passed: ${{ steps.run.outputs.gate_passed }}
+      check_run_id: ${{ steps.run.outputs.check_run_id }}
+      identity_tuple: ${{ steps.run.outputs.identity_tuple }}
+    steps:
+      # NOTE: `uses:` cannot take a dynamic expression — GitHub Actions
+      # resolves it statically. Replace <org>/pr-review-swarm with the real
+      # path and <pinned-sha> with the commit SHA you've reviewed and trust
+      # (see docs/AGENTS.md and the design doc's "pinned commit SHA" rule).
+      # Every `uses:` line below must be updated together when you re-pin.
+      - uses: <org>/pr-review-swarm/action@<pinned-sha>
+        id: run
+        with:
+          entrypoint: status-start
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          pr_number: ${{ inputs.pr_number }}
+
+  prepare:
+    needs: status-start
+    if: needs.status-start.outputs.gate_passed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      stale: ${{ steps.run.outputs.stale }}
+      incomplete: ${{ steps.run.outputs.incomplete }}
+      prepare_artifact: ${{ steps.run.outputs.prepare_artifact }}
+    steps:
+      - uses: <org>/pr-review-swarm/action@<pinned-sha>
+        id: run
+        with:
+          entrypoint: prepare
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          pr_number: ${{ inputs.pr_number }}
+          identity_tuple: ${{ needs.status-start.outputs.identity_tuple }}
+
+  analyze:
+    needs: prepare
+    if: needs.prepare.outputs.stale != 'true'
+    runs-on: ubuntu-latest
+    # Hard requirement: analyze gets no GitHub API access at all — it only
+    # ever sees the already-prepared, already-redacted artifact from
+    # `prepare`, plus the DeepSeek secret. See docs/AGENTS.md #3.
+    permissions: {}
+    outputs:
+      hard_limit_hit: ${{ steps.run.outputs.hard_limit_hit }}
+      any_required_stage_failed: ${{ steps.run.outputs.any_required_stage_failed }}
+      findings: ${{ steps.run.outputs.findings }}
+      coverage_manifest: ${{ steps.run.outputs.coverage_manifest }}
+    steps:
+      - uses: <org>/pr-review-swarm/action@<pinned-sha>
+        id: run
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        with:
+          entrypoint: analyze
+          prepare_artifact: ${{ needs.prepare.outputs.prepare_artifact }}
+          model: ${{ inputs.model }}
+
+  publish:
+    needs: [status-start, prepare, analyze]
+    if: always() && needs.status-start.outputs.gate_passed == 'true' && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Phase 2 adds: pull-requests: write, issues: write
+    outputs:
+      verdict: ${{ steps.run.outputs.verdict }}
+    steps:
+      - uses: <org>/pr-review-swarm/action@<pinned-sha>
+        id: run
+        with:
+          entrypoint: publish
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          pr_number: ${{ inputs.pr_number }}
+          identity_tuple: ${{ needs.status-start.outputs.identity_tuple }}
+          findings: ${{ needs.analyze.outputs.findings }}
+          coverage_manifest: ${{ needs.analyze.outputs.coverage_manifest }}
+          any_required_stage_failed: ${{ needs.analyze.outputs.any_required_stage_failed }}
+
+  status-finalize:
+    needs: [status-start, publish]
+    if: always() && needs.status-start.outputs.gate_passed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+    steps:
+      - uses: <org>/pr-review-swarm/action@<pinned-sha>
+        with:
+          entrypoint: status-finalize
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          owner: ${{ github.repository_owner }}
+          repo: ${{ github.event.repository.name }}
+          check_run_id: ${{ needs.status-start.outputs.check_run_id }}
+          verdict: ${{ needs.publish.outputs.verdict }}
+          # NOTE: the fallback ('') must never sit on the left of `||` — GitHub
+          # Actions treats '' as falsy, so `X && '' || Y` always evaluates Y
+          # whenever X is true. Keep '' as the last term in the chain instead.
+          upstream_failure_kind: ${{ needs.publish.result != 'success' && (needs.publish.result == 'cancelled' && 'timeout' || 'other') || '' }}

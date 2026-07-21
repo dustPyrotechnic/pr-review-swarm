@@ -1,9 +1,71 @@
 name: 'PR Review Swarm'
-description: 'Central action providing status-start/prepare/analyze/publish/status-finalize/watchdog entrypoints'
+description: 'Central action providing status-start/prepare/analyze/publish/status-finalize/watchdog/lightweight-cleanup entrypoints'
 inputs:
   entrypoint:
     description: 'One of: status-start, prepare, analyze, publish, status-finalize, watchdog, lightweight-cleanup'
     required: true
+  github_token:
+    description: 'GITHUB_TOKEN (or equivalent) used for GitHub API calls. Required by every entrypoint except analyze.'
+    required: false
+  owner:
+    description: 'Repository owner. Required by status-finalize and watchdog.'
+    required: false
+  repo:
+    description: 'Repository name. Required by status-finalize and watchdog.'
+    required: false
+  pr_number:
+    description: 'Pull request number. Required for workflow_dispatch-triggered status-start, and for prepare/publish.'
+    required: false
+  identity_tuple:
+    description: 'JSON-encoded IdentityTuple locked by status-start. Required by prepare and publish.'
+    required: false
+  prepare_artifact:
+    description: 'JSON-encoded PrepareArtifact produced by prepare. Required by analyze.'
+    required: false
+  model:
+    description: 'Allow-listed DeepSeek model name. Required by analyze.'
+    required: false
+  findings:
+    description: 'JSON-encoded Finding[] produced by analyze. Required by publish.'
+    required: false
+  coverage_manifest:
+    description: 'JSON-encoded CoverageManifest produced by analyze. Required by publish.'
+    required: false
+  any_required_stage_failed:
+    description: '"true"/"false" output from analyze. Required by publish.'
+    required: false
+  check_run_id:
+    description: 'Check run id created by status-start. Required by status-finalize.'
+    required: false
+  verdict:
+    description: 'JSON-encoded VerdictSummary produced by publish. Used by status-finalize.'
+    required: false
+  upstream_failure_kind:
+    description: '"timeout" or "other", set when an earlier stage failed before producing a verdict. Used by status-finalize.'
+    required: false
+outputs:
+  gate_passed:
+    description: 'status-start output: "true"/"false"'
+  check_run_id:
+    description: 'status-start output: the created check run id'
+  identity_tuple:
+    description: 'status-start output: JSON-encoded IdentityTuple'
+  stale:
+    description: 'prepare output: "true"/"false"'
+  incomplete:
+    description: 'prepare output: "true"/"false"'
+  prepare_artifact:
+    description: 'prepare output: JSON-encoded PrepareArtifact'
+  hard_limit_hit:
+    description: 'analyze output: "true"/"false"'
+  any_required_stage_failed:
+    description: 'analyze output: "true"/"false"'
+  findings:
+    description: 'analyze output: JSON-encoded Finding[]'
+  coverage_manifest:
+    description: 'analyze output: JSON-encoded CoverageManifest'
+  verdict:
+    description: 'publish output: JSON-encoded VerdictSummary'
 runs:
   using: 'node20'
   main: 'dist/index.js'

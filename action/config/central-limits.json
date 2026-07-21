@@ -7,5 +7,9 @@
   "maxPublishRetries": 5,
   "watchdogStaleThresholdMinutes": 30,
   "maxCommitsPerPrForWatchdogScan": 250,
-  "maxPrFilesPerPage": 3000
+  "maxPrFilesPerPage": 3000,
+  "maxPrsPerWatchdogRun": 50,
+  "maxFilesPerShard": 20,
+  "maxBytesPerShard": 200000,
+  "maxShardsPerRun": 20
 }

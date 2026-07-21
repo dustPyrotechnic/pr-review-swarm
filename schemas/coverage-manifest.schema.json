@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pr-review-swarm/schemas/coverage-manifest.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["files", "shards_complete", "hard_limit_hit", "token_usage"],
+  "properties": {
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "treatment", "shard_id", "status"],
+        "properties": {
+          "path": { "type": "string" },
+          "treatment": { "type": "string", "enum": ["reviewed", "skipped_binary", "skipped_generated", "skipped_vendor", "skipped_lockfile", "skipped_budget"] },
+          "shard_id": { "type": "string" },
+          "status": { "type": "string", "enum": ["success", "failed"] },
+          "skip_reason": { "type": "string" },
+          "agents": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "shards_complete": { "type": "boolean" },
+    "hard_limit_hit": { "type": "boolean" },
+    "pulls_files_pagination_truncated": { "type": "boolean" },
+    "missing_patch_files": { "type": "array", "items": { "type": "string" } },
+    "token_usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prompt_tokens", "completion_tokens"],
+      "properties": {
+        "prompt_tokens": { "type": "integer", "minimum": 0 },
+        "completion_tokens": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

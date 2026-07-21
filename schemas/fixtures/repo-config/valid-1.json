@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "trusted_users": ["alice", "bob"],
+  "default_mention": "dustPyrotechnic",
+  "ignore_globs": ["*.generated.swift"],
+  "generated_globs": ["*Mocks.swift"]
+}

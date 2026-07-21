@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pr-review-swarm/schemas/expert-output.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "shard_id",
+    "agent",
+    "candidate_findings",
+    "coverage_complete"
+  ],
+  "properties": {
+    "shard_id": {
+      "type": "string"
+    },
+    "agent": {
+      "type": "string"
+    },
+    "candidate_findings": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "$ref": "https://pr-review-swarm/schemas/candidate-finding.schema.json"
+      }
+    },
+    "coverage_complete": {
+      "type": "boolean"
+    },
+    "skill_requests": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Skill names from skills/index.md requested for a follow-up targeted review round (design doc \"定向补充审核\")"
+    }
+  }
+}

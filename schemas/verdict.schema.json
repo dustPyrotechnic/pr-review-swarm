@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pr-review-swarm/schemas/verdict.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["identity_tuple", "verdict", "review_set_id", "final_findings_count"],
+  "properties": {
+    "identity_tuple": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head_repo", "head_sha", "base_repo", "base_ref", "base_sha", "merge_base_sha"],
+      "properties": {
+        "head_repo": { "type": "string" },
+        "head_sha": { "type": "string" },
+        "base_repo": { "type": "string" },
+        "base_ref": { "type": "string" },
+        "base_sha": { "type": "string" },
+        "merge_base_sha": { "type": "string" }
+      }
+    },
+    "verdict": { "type": "string", "enum": ["pass", "changes_requested", "incomplete", "stale_cancelled"] },
+    "incomplete_reasons": { "type": "array", "items": { "type": "string" } },
+    "review_set_id": { "type": "string" },
+    "final_findings_count": { "type": "integer", "minimum": 0 },
+    "final_review_event": { "type": "string", "enum": ["APPROVE", "REQUEST_CHANGES", "COMMENT", "none"] }
+  }
+}

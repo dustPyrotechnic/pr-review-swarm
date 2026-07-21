@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pr-review-swarm/schemas/prepare-artifact.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["identity_tuple", "shards", "coverage_manifest"],
+  "properties": {
+    "identity_tuple": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head_repo", "head_sha", "base_repo", "base_ref", "base_sha", "merge_base_sha"],
+      "properties": {
+        "head_repo": { "type": "string" },
+        "head_sha": { "type": "string" },
+        "base_repo": { "type": "string" },
+        "base_ref": { "type": "string" },
+        "base_sha": { "type": "string" },
+        "merge_base_sha": { "type": "string" }
+      }
+    },
+    "shards": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "files"],
+        "properties": {
+          "id": { "type": "string" },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "hunks", "contextRefs", "contextContents"],
+              "properties": {
+                "path": { "type": "string" },
+                "hunks": { "type": "array", "items": { "type": "object" } },
+                "contextRefs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["path", "reason", "sha"],
+                    "properties": {
+                      "path": { "type": "string" },
+                      "reason": {
+                        "type": "string",
+                        "enum": ["same_file_full_content", "same_directory_import", "matching_test_file"]
+                      },
+                      "sha": { "type": "string" }
+                    }
+                  }
+                },
+                "contextContents": {
+                  "type": "object",
+                  "description": "path -> redacted full content for each contextRefs entry, so analyze (which has no contents:read) never needs to fetch anything itself",
+                  "additionalProperties": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "coverage_manifest": { "$ref": "https://pr-review-swarm/schemas/coverage-manifest.schema.json" }
+  }
+}

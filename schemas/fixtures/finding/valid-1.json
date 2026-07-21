@@ -1,0 +1,21 @@
+{
+  "id": "find-001",
+  "path": "src/main.swift",
+  "line": 42,
+  "side": "RIGHT",
+  "severity": "high",
+  "confidence": "high",
+  "category": "correctness",
+  "title": "Potential force-unwrap on optional",
+  "evidence": "let value = optional!",
+  "impact": "Runtime crash if optional is nil",
+  "suggestion": "Use if let or guard let instead",
+  "introduced_by_pr": true,
+  "source_agent": "swift-review",
+  "evidence_validation": {
+    "status": "passed"
+  },
+  "verifier_conclusion": {
+    "status": "confirmed"
+  }
+}

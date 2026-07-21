@@ -1,0 +1,8 @@
+[
+  {
+    "path": "pkg/service/user.go",
+    "line": 19,
+    "category": "correctness",
+    "must_find": true
+  }
+]

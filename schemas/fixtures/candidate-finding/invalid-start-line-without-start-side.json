@@ -1,0 +1,16 @@
+{
+  "id": "cf-1",
+  "path": "src/foo.ts",
+  "line": 42,
+  "start_line": 40,
+  "side": "RIGHT",
+  "severity": "high",
+  "confidence": "high",
+  "category": "correctness",
+  "title": "Null pointer dereference",
+  "evidence": "foo.bar is accessed without a null check on line 42",
+  "impact": "Crashes when foo is null",
+  "suggestion": "Add a null check before accessing foo.bar",
+  "introduced_by_pr": true,
+  "source_agent": "generic-correctness"
+}

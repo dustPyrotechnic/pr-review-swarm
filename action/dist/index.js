@@ -23959,11 +23959,11 @@ var require_github = __commonJS({
     var Context = __importStar(require_context());
     var utils_1 = require_utils4();
     exports2.context = new Context.Context();
-    function getOctokit5(token, options, ...additionalPlugins) {
+    function getOctokit6(token, options, ...additionalPlugins) {
       const GitHubWithPlugins = utils_1.GitHub.plugin(...additionalPlugins);
       return new GitHubWithPlugins((0, utils_1.getOctokitOptions)(token, options));
     }
-    exports2.getOctokit = getOctokit5;
+    exports2.getOctokit = getOctokit6;
   }
 });
 
@@ -34502,7 +34502,9 @@ var init_central_limits = __esm({
       maxPrsPerWatchdogRun: 50,
       maxFilesPerShard: 20,
       maxBytesPerShard: 2e5,
-      maxShardsPerRun: 20
+      maxShardsPerRun: 20,
+      maxFindingsPerReviewBatch: 20,
+      maxReviewBodyChars: 6e4
     };
   }
 });
@@ -37489,18 +37491,177 @@ var init_verdict = __esm({
   }
 });
 
+// src/lib/review-set-id.ts
+function computeFindingsDigest(findings) {
+  const sortedIds = findings.map((f) => f.id).sort();
+  return (0, import_node_crypto.createHash)("sha256").update(JSON.stringify(sortedIds)).digest("hex").slice(0, 16);
+}
+function computeFullContentDigest(findings) {
+  const sorted = [...findings].sort((a, b) => a.id.localeCompare(b.id));
+  return (0, import_node_crypto.createHash)("sha256").update(JSON.stringify(sorted)).digest("hex");
+}
+function computeReviewSetId(input) {
+  const payload = {
+    identity_tuple: input.identityTuple,
+    engine_revision: input.engineRevision,
+    policy_revision: input.policyRevision,
+    model: input.model,
+    schema_version: input.schemaVersion,
+    findings_content_digest: computeFullContentDigest(input.findings)
+  };
+  return (0, import_node_crypto.createHash)("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 20);
+}
+var import_node_crypto;
+var init_review_set_id = __esm({
+  "src/lib/review-set-id.ts"() {
+    "use strict";
+    import_node_crypto = require("node:crypto");
+  }
+});
+
+// src/lib/publish-manifest.ts
+function estimateFindingChars(finding) {
+  return finding.title.length + finding.evidence.length + finding.impact.length + finding.suggestion.length + 64;
+}
+function planReviewBatches(findings, limits) {
+  const groups = [];
+  let current = [];
+  let currentChars = 0;
+  for (const finding of findings) {
+    const findingChars = estimateFindingChars(finding);
+    const wouldExceedCount = current.length + 1 > limits.maxFindingsPerReviewBatch;
+    const wouldExceedChars = current.length > 0 && currentChars + findingChars > limits.maxReviewBodyChars;
+    if (current.length > 0 && (wouldExceedCount || wouldExceedChars)) {
+      groups.push(current);
+      current = [];
+      currentChars = 0;
+    }
+    current.push(finding);
+    currentChars += findingChars;
+  }
+  if (current.length > 0 || groups.length === 0) {
+    groups.push(current);
+  }
+  return groups.map((batchFindings, index) => ({
+    batchIndex: index,
+    batchCount: groups.length,
+    findings: batchFindings,
+    findingsDigest: computeFindingsDigest(batchFindings),
+    event: "COMMENT"
+  }));
+}
+var init_publish_manifest = __esm({
+  "src/lib/publish-manifest.ts"() {
+    "use strict";
+    init_review_set_id();
+  }
+});
+
+// src/lib/hidden-marker.ts
+function encodeBatchMarker(marker) {
+  return `<!-- pr-review-swarm:review_set_id=${marker.reviewSetId};batch=${marker.batchIndex}/${marker.batchCount};digest=${marker.digest} -->`;
+}
+function decodeBatchMarker(body) {
+  if (!body)
+    return void 0;
+  const match2 = MARKER_RE.exec(body);
+  if (!match2)
+    return void 0;
+  const [, reviewSetId, batchIndexRaw, batchCountRaw, digest] = match2;
+  const batchIndex = Number(batchIndexRaw);
+  const batchCount = Number(batchCountRaw);
+  if (!reviewSetId || !digest || Number.isNaN(batchIndex) || Number.isNaN(batchCount)) {
+    return void 0;
+  }
+  return { reviewSetId, batchIndex, batchCount, digest };
+}
+var MARKER_RE;
+var init_hidden_marker = __esm({
+  "src/lib/hidden-marker.ts"() {
+    "use strict";
+    MARKER_RE = /<!--\s*pr-review-swarm:review_set_id=([^;]+);batch=(\d+)\/(\d+);digest=(\S+?)\s*-->/;
+  }
+});
+
+// src/lib/summary-comment.ts
+function findStableMarkerId(ctx) {
+  return `<!-- pr-review-swarm:marker=summary;repo=${ctx.owner}/${ctx.repo};pr=${ctx.prNumber} -->`;
+}
+function encodeResultMarker(ctx) {
+  return `<!-- pr-review-swarm:result;head_sha=${ctx.headSha};base_sha=${ctx.baseSha};engine_revision=${ctx.engineRevision};policy_revision=${ctx.policyRevision};model=${ctx.model};schema_version=${ctx.schemaVersion};verdict=${ctx.verdict};review_set_id=${ctx.reviewSetId} -->`;
+}
+function buildSummaryCommentBody(ctx, verdictSummary, findings) {
+  const lines = ["# PR Review Swarm", "", `**Verdict:** ${verdictSummary.verdict}`];
+  if (verdictSummary.incomplete_reasons?.length) {
+    lines.push(`**Incomplete reasons:** ${verdictSummary.incomplete_reasons.join(", ")}`);
+  }
+  lines.push("", `**Findings (${findings.length}):**`);
+  if (findings.length === 0) {
+    lines.push("- (none)");
+  } else {
+    for (const finding of findings) {
+      lines.push(`- \`${finding.path}:${finding.line}\` [${finding.severity}] ${finding.title}`);
+    }
+  }
+  lines.push("", findStableMarkerId(ctx), encodeResultMarker(ctx));
+  const body = lines.join("\n");
+  if (body.length <= MAX_COMMENT_CHARS) {
+    return body;
+  }
+  const truncated = [
+    "# PR Review Swarm",
+    "",
+    `**Verdict:** ${verdictSummary.verdict}`,
+    "",
+    `**Findings (${findings.length}):** list truncated, see Review batches for the full list.`,
+    "",
+    findStableMarkerId(ctx),
+    encodeResultMarker(ctx)
+  ].join("\n");
+  return truncated;
+}
+async function upsertSummaryComment(octokit, ctx, body) {
+  const marker = findStableMarkerId(ctx);
+  const { data: comments } = await octokit.rest.issues.listComments({
+    owner: ctx.owner,
+    repo: ctx.repo,
+    issue_number: ctx.prNumber
+  });
+  const existing = comments.find((c) => c.body?.includes(marker));
+  if (existing) {
+    await octokit.rest.issues.updateComment({
+      owner: ctx.owner,
+      repo: ctx.repo,
+      comment_id: existing.id,
+      body
+    });
+    return { commentId: existing.id, action: "updated" };
+  }
+  const { data } = await octokit.rest.issues.createComment({
+    owner: ctx.owner,
+    repo: ctx.repo,
+    issue_number: ctx.prNumber,
+    body
+  });
+  return { commentId: data.id, action: "created" };
+}
+var MAX_COMMENT_CHARS;
+var init_summary_comment = __esm({
+  "src/lib/summary-comment.ts"() {
+    "use strict";
+    MAX_COMMENT_CHARS = 65536;
+  }
+});
+
 // src/entrypoints/publish.ts
 var publish_exports = {};
 __export(publish_exports, {
   buildPublishResult: () => buildPublishResult,
+  executePublish: () => executePublish,
   run: () => run5
 });
 function buildMarkdownSummary(verdictSummary, findings) {
-  const lines = [
-    "# PR Review Swarm (shadow mode)",
-    "",
-    `**Verdict:** ${verdictSummary.verdict}`
-  ];
+  const lines = ["# PR Review Swarm", "", `**Verdict:** ${verdictSummary.verdict}`];
   if (verdictSummary.incomplete_reasons?.length) {
     lines.push(`**Incomplete reasons:** ${verdictSummary.incomplete_reasons.join(", ")}`);
   }
@@ -37536,16 +37697,166 @@ function buildPublishResult(input) {
     ...incompleteReasons.length > 0 ? { incomplete_reasons: incompleteReasons } : {},
     review_set_id: input.reviewSetId,
     final_findings_count: input.findings.length,
-    // PHASE 1: no GitHub write calls here, see Phase 2 task list. The verdict
-    // above can already say "changes_requested" (that's a pure computation
-    // over findings/coverage), but this action never actually posts a Review,
-    // so the *real* GitHub-visible event always stays "none" in Phase 1.
-    final_review_event: "none"
+    // PHASE 2: every non-stale run publishes at least one Review batch, and
+    // that batch's event is always COMMENT (see reusable-pr-review.yml —
+    // this Job never holds the intent to change PR review state; that only
+    // arrives in Phase 3, which replaces this fixed value with a real branch
+    // driven by `verdict`).
+    final_review_event: "COMMENT"
   };
   return {
     verdictSummary,
     markdownSummary: buildMarkdownSummary(verdictSummary, input.findings)
   };
+}
+function buildBatchReviewBody(batch, reviewSetId) {
+  const lines = [`## PR Review Swarm \u2014 batch ${batch.batchIndex + 1}/${batch.batchCount}`, ""];
+  if (batch.findings.length === 0) {
+    lines.push("No findings in this run.");
+  } else {
+    lines.push(`${batch.findings.length} finding(s) in this batch (see inline comments below).`);
+  }
+  lines.push("", encodeBatchMarker({
+    reviewSetId,
+    batchIndex: batch.batchIndex,
+    batchCount: batch.batchCount,
+    digest: batch.findingsDigest
+  }));
+  return lines.join("\n");
+}
+function buildInlineComments(batch) {
+  return batch.findings.map((finding) => ({
+    path: finding.path,
+    line: finding.line,
+    side: finding.side,
+    ...finding.start_line !== void 0 ? { start_line: finding.start_line } : {},
+    ...finding.start_side !== void 0 ? { start_side: finding.start_side } : {},
+    body: `**[${finding.severity}] ${finding.title}**
+
+${finding.evidence}
+
+${finding.suggestion}`
+  }));
+}
+async function supersedeOldReviewSets(octokit, params) {
+  const staleReviews = params.reviews.filter((review) => {
+    const marker = decodeBatchMarker(review.body);
+    return marker !== void 0 && marker.reviewSetId !== params.currentReviewSetId;
+  });
+  if (staleReviews.length === 0)
+    return;
+  const { data: allComments } = await octokit.rest.pulls.listReviewComments({
+    owner: params.owner,
+    repo: params.repo,
+    pull_number: params.prNumber
+  });
+  for (const review of staleReviews) {
+    const notice = `\u26A0\uFE0F \u5DF2\u88AB\u65B0\u4E00\u8F6E\u5BA1\u6838\uFF08review_set_id=${params.currentReviewSetId}\uFF09\u53D6\u4EE3\uFF0C\u8BF7\u4EE5\u4E0B\u65B9\u6700\u65B0 Review \u4E3A\u51C6\u3002
+
+`;
+    await octokit.rest.pulls.updateReview({
+      owner: params.owner,
+      repo: params.repo,
+      pull_number: params.prNumber,
+      review_id: review.id,
+      body: notice + (review.body ?? "")
+    });
+    const commentsForReview = allComments.filter((c) => c.pull_request_review_id === review.id);
+    for (const comment of commentsForReview) {
+      await octokit.rest.pulls.updateReviewComment({
+        owner: params.owner,
+        repo: params.repo,
+        comment_id: comment.id,
+        body: `\u26A0\uFE0F \u5DF2\u88AB\u65B0\u4E00\u8F6E\u5BA1\u6838\uFF08review_set_id=${params.currentReviewSetId}\uFF09\u53D6\u4EE3\u3002
+
+${comment.body ?? ""}`
+      });
+    }
+  }
+}
+async function executePublish(input) {
+  if (!identityTuplesEqual(input.currentIdentityTuple, input.expectedIdentityTuple)) {
+    return buildPublishResult({
+      currentIdentityTuple: input.currentIdentityTuple,
+      expectedIdentityTuple: input.expectedIdentityTuple,
+      findings: input.findings,
+      coverageManifest: input.coverageManifest,
+      anyRequiredStageFailed: input.anyRequiredStageFailed,
+      reviewSetId: ""
+    });
+  }
+  const reviewSetId = computeReviewSetId({
+    identityTuple: toSchemaIdentityTuple(input.currentIdentityTuple),
+    engineRevision: input.engineRevision,
+    policyRevision: input.policyRevision,
+    model: input.model,
+    schemaVersion: input.schemaVersion,
+    findings: input.findings
+  });
+  const result = buildPublishResult({
+    currentIdentityTuple: input.currentIdentityTuple,
+    expectedIdentityTuple: input.expectedIdentityTuple,
+    findings: input.findings,
+    coverageManifest: input.coverageManifest,
+    anyRequiredStageFailed: input.anyRequiredStageFailed,
+    reviewSetId
+  });
+  const { data: existingReviews } = await input.octokit.rest.pulls.listReviews({
+    owner: input.owner,
+    repo: input.repo,
+    pull_number: input.prNumber
+  });
+  await supersedeOldReviewSets(input.octokit, {
+    owner: input.owner,
+    repo: input.repo,
+    prNumber: input.prNumber,
+    currentReviewSetId: reviewSetId,
+    reviews: existingReviews
+  });
+  const batches = planReviewBatches(input.findings, input.reviewBatchLimits);
+  const alreadyPublished = existingReviews.map((review) => decodeBatchMarker(review.body)).filter((marker) => marker !== void 0).filter((marker) => marker.reviewSetId === reviewSetId);
+  for (const batch of batches) {
+    const existing = alreadyPublished.find((marker) => marker.batchIndex === batch.batchIndex);
+    if (existing) {
+      if (existing.digest === batch.findingsDigest) {
+        continue;
+      }
+      result.verdictSummary.verdict = "incomplete";
+      result.verdictSummary.incomplete_reasons = [
+        ...result.verdictSummary.incomplete_reasons ?? [],
+        "digest_mismatch"
+      ];
+      break;
+    }
+    await input.octokit.rest.pulls.createReview({
+      owner: input.owner,
+      repo: input.repo,
+      pull_number: input.prNumber,
+      commit_id: input.currentIdentityTuple.headSha,
+      event: "COMMENT",
+      body: buildBatchReviewBody(batch, reviewSetId),
+      comments: buildInlineComments(batch)
+    });
+  }
+  const summaryCtx = {
+    owner: input.owner,
+    repo: input.repo,
+    prNumber: input.prNumber,
+    headSha: input.currentIdentityTuple.headSha,
+    baseSha: input.currentIdentityTuple.baseSha,
+    engineRevision: input.engineRevision,
+    policyRevision: input.policyRevision,
+    model: input.model,
+    schemaVersion: input.schemaVersion,
+    verdict: result.verdictSummary.verdict,
+    reviewSetId
+  };
+  await upsertSummaryComment(
+    input.octokit,
+    summaryCtx,
+    buildSummaryCommentBody(summaryCtx, result.verdictSummary, input.findings)
+  );
+  return result;
 }
 async function run5() {
   const octokit = getOctokitFromInput();
@@ -37584,26 +37895,44 @@ async function run5() {
     token_usage: { prompt_tokens: 0, completion_tokens: 0 }
   };
   const anyRequiredStageFailed = core6.getInput("any_required_stage_failed") === "true";
-  const result = buildPublishResult({
+  const model = core6.getInput("model") || "unknown-model";
+  const result = await executePublish({
+    octokit,
+    owner,
+    repo,
+    prNumber,
     currentIdentityTuple,
     expectedIdentityTuple,
     findings,
     coverageManifest,
     anyRequiredStageFailed,
-    reviewSetId: `${import_github5.context.runId}-${process.env.GITHUB_RUN_ATTEMPT ?? "1"}`
+    engineRevision: process.env.PR_REVIEW_SWARM_ENGINE_REVISION ?? "unknown-engine-revision",
+    policyRevision: (0, import_node_crypto2.createHash)("sha256").update(JSON.stringify(central_limits_default)).digest("hex").slice(0, 12),
+    model,
+    schemaVersion: "finding-v1",
+    reviewBatchLimits: {
+      maxFindingsPerReviewBatch: central_limits_default.maxFindingsPerReviewBatch,
+      maxReviewBodyChars: central_limits_default.maxReviewBodyChars
+    }
   });
   await core6.summary.addRaw(result.markdownSummary).write();
   core6.setOutput("verdict", JSON.stringify(result.verdictSummary));
 }
-var core6, import_github5;
+var import_node_crypto2, core6, import_github5;
 var init_publish = __esm({
   "src/entrypoints/publish.ts"() {
     "use strict";
+    import_node_crypto2 = require("node:crypto");
     core6 = __toESM(require_core(), 1);
     import_github5 = __toESM(require_github(), 1);
+    init_central_limits();
     init_github_client();
     init_identity_tuple();
     init_verdict();
+    init_review_set_id();
+    init_publish_manifest();
+    init_hidden_marker();
+    init_summary_comment();
   }
 });
 

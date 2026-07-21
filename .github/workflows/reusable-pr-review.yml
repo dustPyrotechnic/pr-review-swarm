@@ -92,7 +92,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # Phase 2 adds: pull-requests: write, issues: write
+      pull-requests: write
+      issues: write
     outputs:
       verdict: ${{ steps.run.outputs.verdict }}
     steps:
@@ -106,6 +107,7 @@ jobs:
           findings: ${{ needs.analyze.outputs.findings }}
           coverage_manifest: ${{ needs.analyze.outputs.coverage_manifest }}
           any_required_stage_failed: ${{ needs.analyze.outputs.any_required_stage_failed }}
+          model: ${{ inputs.model }}
 
   status-finalize:
     needs: [status-start, publish]

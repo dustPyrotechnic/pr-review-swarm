@@ -172,19 +172,30 @@ export function isOwnedByThisBot(review: { body: string | null }): boolean; // d
 
 ## 3. 实现阶段记录
 
-> 本节为进度追踪表，Phase 2 实际开工后逐项勾选/回填 commit。**当前状态：尚未开始编码，等待您对上述方案与待确认项 P2-A~G 的确认。**
+> 本节为进度追踪表。**当前状态：代码侧（Task 2.0-2.3b）已在 worktree `feature/phase2-comment-only` 中按 TDD 完成并全部验证通过；2.4/2.5 是人工/沙盒仓库任务，尚未执行。**
 
 | 阶段 | Task | 状态 | 备注 / commit |
 |------|------|------|----------------|
-| 2.0 | central-limits 新增字段 + 单测 | ⬜ 未开始 | |
-| 2.1 | `summary-comment.ts` + 测试 | ⬜ 未开始 | |
-| 2.2 | `review-set-id.ts` / `publish-manifest.ts` / `hidden-marker.ts` + 测试 | ⬜ 未开始 | |
-| 2.3 | `publish.ts` 真实写入路径 + 测试 | ⬜ 未开始 | |
-| 2.3b | `reusable-pr-review.yml` 权限更新 | ⬜ 未开始 | |
+| 2.0 | central-limits 新增字段（`maxFindingsPerReviewBatch`、`maxReviewBodyChars`） | ✅ 完成 | 随 2.2 的 `publish-manifest.test.ts` 一并验证读取生效，未单独拆 config-only 测试 |
+| 2.1 | `summary-comment.ts` + 测试 | ✅ 完成 | 8 个用例：稳定 marker 定位、创建/更新分支、body 超限截断 |
+| 2.2 | `review-set-id.ts` / `publish-manifest.ts` / `hidden-marker.ts` + 测试 | ✅ 完成 | TDD 过程中发现并修正两个真实 bug：① `review_set_id` 最初误用 id-only 摘要，同 id 不同内容不会变化，已改为对 finding 全内容摘要；② `hidden-marker.ts` 正则字符类 `[^\s-]+` 意外排除连字符，导致带 `-` 的 digest 解析失败，已改为 `\S+?` |
+| 2.3 | `publish.ts` 真实写入路径 + 测试 | ✅ 完成 | 12 个用例：stale 不写、单批/多批发布、digest 对账跳过/不一致判 incomplete、旧 review_set_id 追加取代说明、Phase 2 事件锁（不出现 `REQUEST_CHANGES`/`APPROVE` 赋值）。已知简化：inline comment 直接信任 finding 的 `path/line/side`，未实现"定位失败降级到 body"（design D-L215），记入下方待办 |
+| 2.3b | `reusable-pr-review.yml` 权限更新 | ✅ 完成 | `publish` Job 追加 `pull-requests: write`/`issues: write`；`publish` 步骤新增 `model` input（`review_set_id` 派生需要） |
 | 2.4 | 集成测试（沙盒仓库人工验证，plan 文档 Task 2.3 验收标准最后一条） | ⬜ 未开始 | 需要您在沙盒仓库执行，非代码可完成 |
 | 2.5 | Phase 2 退出检查（对照 plan 文档"上线门槛②"，确认评论/inline comment 正常出现且审核状态不受影响） | ⬜ 未开始 | |
 
 状态取值：⬜ 未开始 / 🔶 进行中 / ✅ 完成 / ⚠️ 阻塞（附阻塞原因）。
+
+**代码侧验证记录（worktree `.worktrees/phase2-comment-only`，2026-07-21）：**
+- `npm run typecheck` / `npm run lint` / `npm test` — 全部通过（32 个测试文件，222 个用例，含 Phase 0/1 原有 180 个）。
+- `npm run build` — 无 dist 漂移（仅既有的 `import.meta` cjs 警告，Phase 1 已确认不影响生产路径）。
+- `actionlint` — 通过。
+- forbidden-pr-head-ref 扫描 — 干净。
+
+**已知简化 / 遗留待办（未在本轮 Task 2.3 范围内实现，供 Phase 3 或后续迭代跟进）：**
+1. inline comment 定位失败时降级到 Review body（design D-L215）未实现，当前直接信任 finding 的 path/line/side 直接建 inline comment。
+2. `engineRevision` 目前读取环境变量 `PR_REVIEW_SWARM_ENGINE_REVISION`，尚未在 esbuild 构建期注入真实 git short SHA（P2-D 提案的一部分），当前会退化为 `'unknown-engine-revision'`，需要在合并前补一个 esbuild `define` 步骤。
+3. Task 2.3 验收标准里"本次运行内重复调用（模拟重试）"用测试模拟了跨两次 `executePublish` 调用的对账，未测试单次调用内因网络错误重试的路径（`maxPublishRetries` 语义，P2-G 提案的退避重试尚未实现，目前 API 调用失败会直接向上抛出，导致整个 publish 失败，这是保守但尚不完整的行为）。
 
 ---
 

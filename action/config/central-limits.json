@@ -11,5 +11,7 @@
   "maxPrsPerWatchdogRun": 50,
   "maxFilesPerShard": 20,
   "maxBytesPerShard": 200000,
-  "maxShardsPerRun": 20
+  "maxShardsPerRun": 20,
+  "maxFindingsPerReviewBatch": 20,
+  "maxReviewBodyChars": 60000
 }

@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**Phase 1（shadow mode，只读）实现中** —— 六个入口（status-start/prepare/analyze/publish/status-finalize/watchdog）及 lightweight-cleanup 已全部实现并有单测覆盖；`publish` 目前只写 job summary，不调用任何 GitHub 写 API。完整设计见 [`docs/plans/2026-07-13-pr-review-swarm-design.md`](docs/plans/2026-07-13-pr-review-swarm-design.md)，实施计划见 [`docs/plans/2026-07-18-pr-review-swarm-implementation-plan.md`](docs/plans/2026-07-18-pr-review-swarm-implementation-plan.md)。
+**Phase 1-3 代码均已完成**（shadow mode → comment-only → 真实 REQUEST_CHANGES/APPROVE），并在沙盒仓库端到端验证通过。`publish` 现在会按裁决结果发布真正的 GitHub Review（`APPROVE`/`REQUEST_CHANGES`），但**尚未**在任何目标仓库把 `PR Review Swarm / verdict` 设为 required check（Phase 4，需要仓库所有者手动配置分支保护并观察一段时间，见下）。完整设计见 [`docs/plans/2026-07-13-pr-review-swarm-design.md`](docs/plans/2026-07-13-pr-review-swarm-design.md)，实施计划见 [`docs/plans/2026-07-18-pr-review-swarm-implementation-plan.md`](docs/plans/2026-07-18-pr-review-swarm-implementation-plan.md)，安全与集成测试对账见 [`action/test/integration/CHECKLIST.md`](action/test/integration/CHECKLIST.md)。
 
 ## 目录结构（计划）
 

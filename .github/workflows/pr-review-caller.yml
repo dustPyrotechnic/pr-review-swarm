@@ -1,0 +1,19 @@
+name: PR Review Swarm
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  review:
+    uses: ./.github/workflows/reusable-pr-review.yml
+    with:
+      pr_number: ${{ github.event.pull_request.number }}
+      model: deepseek-chat
+    secrets:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+
+  watchdog:
+    needs: review
+    if: always()
+    uses: ./.github/workflows/reusable-pr-review-watchdog.yml

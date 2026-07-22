@@ -51,4 +51,53 @@ describe('scanAndRedactSecrets', () => {
     const result = scanAndRedactSecrets(content);
     expect(result.redactionsCount).toBe(2);
   });
+
+  describe('high-entropy heuristic (catches provider-unrecognized secrets)', () => {
+    it('redacts a high-entropy string assigned to a key/token/secret-named variable', () => {
+      const content = 'const apiKey = "zQ7!kP2vR9xL4mN8wJ6tH1sB3yF5dC0e";';
+      const result = scanAndRedactSecrets(content);
+      expect(result.redactedContent).not.toContain('zQ7!kP2vR9xL4mN8wJ6tH1sB3yF5dC0e');
+      expect(result.redactedContent).toContain('[REDACTED:high-entropy-secret]');
+      expect(result.redactionsCount).toBe(1);
+    });
+
+    it('does not redact a low-entropy string even with a sensitive variable name', () => {
+      const content = 'const apiKeyPlaceholder = "aaaaaaaaaaaaaaaaaaaaaaaaaaaa";';
+      const result = scanAndRedactSecrets(content);
+      expect(result.redactedContent).toBe(content);
+      expect(result.redactionsCount).toBe(0);
+    });
+
+    it('does not redact a high-entropy string assigned to a non-sensitive variable name', () => {
+      const content = 'const message = "zQ7!kP2vR9xL4mN8wJ6tH1sB3yF5dC0e";';
+      const result = scanAndRedactSecrets(content);
+      expect(result.redactedContent).toBe(content);
+      expect(result.redactionsCount).toBe(0);
+    });
+
+    it('does not redact a short sensitive-named value below the length floor', () => {
+      const content = 'const secret = "short";';
+      const result = scanAndRedactSecrets(content);
+      expect(result.redactedContent).toBe(content);
+      expect(result.redactionsCount).toBe(0);
+    });
+
+    it('matches password- and credential-named variables too', () => {
+      const content =
+        'const dbPassword = "xT9!qL2wR7mK4vN8jH1sB3yF5dC0eZ6a";\n' +
+        'const authCredential = "yS8!pM3nQ6xJ5vK1wH9tB4rF2dC7eZ0b";';
+      const result = scanAndRedactSecrets(content);
+      expect(result.redactionsCount).toBe(2);
+      expect(result.redactedContent).not.toContain('xT9!qL2wR7mK4vN8jH1sB3yF5dC0eZ6a');
+      expect(result.redactedContent).not.toContain('yS8!pM3nQ6xJ5vK1wH9tB4rF2dC7eZ0b');
+    });
+
+    it('does not double-redact a value already redacted by a known-provider pattern', () => {
+      const content = 'const key = "AKIAIOSFODNN7EXAMPLE";';
+      const result = scanAndRedactSecrets(content);
+      expect(result.redactionsCount).toBe(1);
+      expect(result.redactedContent).toContain('[REDACTED:aws-access-key-id]');
+      expect(result.redactedContent).not.toContain('[REDACTED:high-entropy-secret]');
+    });
+  });
 });

@@ -36530,6 +36530,32 @@ var init_context_resolver = __esm({
 });
 
 // src/lib/secret-scanner.ts
+function shannonEntropy(value) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const ch of value) {
+    counts.set(ch, (counts.get(ch) ?? 0) + 1);
+  }
+  let entropy = 0;
+  for (const count of counts.values()) {
+    const p = count / value.length;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy;
+}
+function redactHighEntropySecrets(content, onRedact) {
+  return content.replace(QUOTED_ASSIGNMENT_RE, (full, name, value) => {
+    if (value.startsWith("[REDACTED:"))
+      return full;
+    if (!SENSITIVE_NAME_RE.test(name))
+      return full;
+    if (value.length < HIGH_ENTROPY_MIN_LENGTH)
+      return full;
+    if (shannonEntropy(value) < HIGH_ENTROPY_THRESHOLD)
+      return full;
+    onRedact();
+    return full.replace(value, "[REDACTED:high-entropy-secret]");
+  });
+}
 function scanAndRedactSecrets(content) {
   let redactedContent = content;
   let redactionsCount = 0;
@@ -36539,9 +36565,12 @@ function scanAndRedactSecrets(content) {
       return `[REDACTED:${pattern.name}]`;
     });
   }
+  redactedContent = redactHighEntropySecrets(redactedContent, () => {
+    redactionsCount += 1;
+  });
   return { redactedContent, redactionsCount };
 }
-var SECRET_PATTERNS;
+var SECRET_PATTERNS, SENSITIVE_NAME_RE, QUOTED_ASSIGNMENT_RE, HIGH_ENTROPY_MIN_LENGTH, HIGH_ENTROPY_THRESHOLD;
 var init_secret_scanner = __esm({
   "src/lib/secret-scanner.ts"() {
     "use strict";
@@ -36552,6 +36581,10 @@ var init_secret_scanner = __esm({
       { name: "aws-access-key-id", regex: /AKIA[0-9A-Z]{16}/g },
       { name: "jwt", regex: /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g }
     ];
+    SENSITIVE_NAME_RE = /(key|token|secret|password|credential|auth)/i;
+    QUOTED_ASSIGNMENT_RE = /([A-Za-z_][A-Za-z0-9_]*)\s*[:=]{1,2}\s*['"`]([^'"`\n]{16,})['"`]/g;
+    HIGH_ENTROPY_MIN_LENGTH = 16;
+    HIGH_ENTROPY_THRESHOLD = 3.5;
   }
 });
 

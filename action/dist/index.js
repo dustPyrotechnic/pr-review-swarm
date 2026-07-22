@@ -36920,7 +36920,9 @@ function skillsDir() {
   if (process.env.GITHUB_ACTION_PATH) {
     return import_node_path3.default.join(process.env.GITHUB_ACTION_PATH, "..", "skills");
   }
-  return import_node_path3.default.join(import_node_path3.default.dirname((0, import_node_url.fileURLToPath)(import_meta.url)), "../../../skills");
+  const dir = typeof __dirname !== "undefined" ? __dirname : import_node_path3.default.dirname((0, import_node_url.fileURLToPath)(import_meta.url));
+  const levels = import_node_path3.default.basename(dir) === "dist" ? "../.." : "../../..";
+  return import_node_path3.default.join(dir, levels, "skills");
 }
 function readIndexMd() {
   return (0, import_node_fs.readFileSync)(import_node_path3.default.join(skillsDir(), "index.md"), "utf-8");

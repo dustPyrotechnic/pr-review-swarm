@@ -30,7 +30,21 @@ function skillsDir(): string {
   if (process.env.GITHUB_ACTION_PATH) {
     return path.join(process.env.GITHUB_ACTION_PATH, '..', 'skills');
   }
-  return path.join(path.dirname(fileURLToPath(import.meta.url)), '../../../skills');
+  // GITHUB_ACTION_PATH isn't guaranteed for a plain JS action step (as
+  // opposed to a composite action), so fall back to locating this file on
+  // disk. __dirname (a real CJS runtime global, not an esbuild shim —
+  // import.meta.url is unavailable in the bundled CJS dist/index.js, per
+  // esbuild's own build warning) is defined both in the bundled production
+  // dist and, as it turns out, under Vitest's transform. Its meaning
+  // differs by layout: action/dist/index.js sits two levels above the repo
+  // root's skills/, while action/src/lib/skill-loader.ts (real source, as
+  // seen locally and under Vitest) sits three levels above it.
+  const dir =
+    typeof __dirname !== 'undefined'
+      ? __dirname
+      : path.dirname(fileURLToPath(import.meta.url));
+  const levels = path.basename(dir) === 'dist' ? '../..' : '../../..';
+  return path.join(dir, levels, 'skills');
 }
 
 export function readIndexMd(): string {

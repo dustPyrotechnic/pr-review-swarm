@@ -7,9 +7,23 @@ on:
 jobs:
   review:
     uses: ./.github/workflows/reusable-pr-review.yml
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      checks: write
     with:
       pr_number: ${{ github.event.pull_request.number }}
       model: deepseek-chat
     secrets:
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+
+  watchdog:
+    needs: review
+    if: always()
+    uses: ./.github/workflows/reusable-pr-review-watchdog.yml
+    permissions:
+      pull-requests: read
+      checks: write
+      actions: read
 

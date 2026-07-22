@@ -37964,13 +37964,31 @@ async function supersedeOldReviewSets(octokit, params) {
     const notice = `\u26A0\uFE0F \u5DF2\u88AB\u65B0\u4E00\u8F6E\u5BA1\u6838\uFF08review_set_id=${params.currentReviewSetId}\uFF09\u53D6\u4EE3\uFF0C\u8BF7\u4EE5\u4E0B\u65B9\u6700\u65B0 Review \u4E3A\u51C6\u3002
 
 `;
-    await octokit.rest.pulls.updateReview({
-      owner: params.owner,
-      repo: params.repo,
-      pull_number: params.prNumber,
-      review_id: review.id,
-      body: notice + (review.body ?? "")
-    });
+    let dismissed = false;
+    if (review.state === "APPROVED" || review.state === "CHANGES_REQUESTED") {
+      try {
+        await octokit.rest.pulls.dismissReview({
+          owner: params.owner,
+          repo: params.repo,
+          pull_number: params.prNumber,
+          review_id: review.id,
+          message: notice
+        });
+        dismissed = true;
+      } catch (err) {
+        if (err.status !== 403)
+          throw err;
+      }
+    }
+    if (!dismissed) {
+      await octokit.rest.pulls.updateReview({
+        owner: params.owner,
+        repo: params.repo,
+        pull_number: params.prNumber,
+        review_id: review.id,
+        body: notice + (review.body ?? "")
+      });
+    }
     const commentsForReview = allComments.filter((c) => c.pull_request_review_id === review.id);
     for (const comment of commentsForReview) {
       await octokit.rest.pulls.updateReviewComment({

@@ -154,7 +154,7 @@ const reviewBatchLimits = { maxFindingsPerReviewBatch: 20, maxReviewBodyChars: 6
 const DEFAULT_PATCH = ['@@ -1,2 +1,3 @@', ' context line', '+added line', ' context line 2'].join('\n');
 
 function makeMockOctokit(overrides: {
-  listReviews?: Array<{ id: number; body: string | null }>;
+  listReviews?: Array<{ id: number; body: string | null; state?: string }>;
   listReviewComments?: Array<{ id: number; pull_request_review_id: number }>;
   files?: Array<{ filename: string; patch?: string }>;
 } = {}) {
@@ -170,6 +170,7 @@ function makeMockOctokit(overrides: {
         listFiles: vi.fn().mockResolvedValue({ data: files }),
         createReview: vi.fn().mockResolvedValue({ data: { id: 1 } }),
         updateReview: vi.fn().mockResolvedValue({ data: {} }),
+        dismissReview: vi.fn().mockResolvedValue({ data: {} }),
         listReviewComments: vi.fn().mockResolvedValue({ data: overrides.listReviewComments ?? [] }),
         updateReviewComment: vi.fn().mockResolvedValue({ data: {} }),
       },
@@ -407,9 +408,9 @@ describe('executePublish', () => {
     expect(octokit.rest.pulls.createReview).not.toHaveBeenCalled();
   });
 
-  it('appends a superseded notice to reviews and their comments from an older review_set_id', async () => {
+  it('appends a superseded notice to a stale COMMENT-state review and its comments (no dismiss attempted)', async () => {
     const octokit = makeMockOctokit({
-      listReviews: [{ id: 777, body: encodeBatchMarker({ reviewSetId: 'old-set', batchIndex: 0, batchCount: 1, digest: 'abc' }) }],
+      listReviews: [{ id: 777, state: 'COMMENTED', body: encodeBatchMarker({ reviewSetId: 'old-set', batchIndex: 0, batchCount: 1, digest: 'abc' }) }],
       listReviewComments: [{ id: 888, pull_request_review_id: 777 }],
     });
 
@@ -427,12 +428,88 @@ describe('executePublish', () => {
       ...engineCtx,
     });
 
+    expect(octokit.rest.pulls.dismissReview).not.toHaveBeenCalled();
     expect(octokit.rest.pulls.updateReview).toHaveBeenCalledWith(
       expect.objectContaining({ owner: 'octo', repo: 'repo', pull_number: 42, review_id: 777 }),
     );
     expect(octokit.rest.pulls.updateReviewComment).toHaveBeenCalledWith(
       expect.objectContaining({ owner: 'octo', repo: 'repo', comment_id: 888 }),
     );
+  });
+
+  it('dismisses a stale CHANGES_REQUESTED review instead of editing its body', async () => {
+    const octokit = makeMockOctokit({
+      listReviews: [{ id: 777, state: 'CHANGES_REQUESTED', body: encodeBatchMarker({ reviewSetId: 'old-set', batchIndex: 0, batchCount: 1, digest: 'abc' }) }],
+    });
+
+    await executePublish({
+      octokit: octokit as never,
+      owner: 'octo',
+      repo: 'repo',
+      prNumber: 42,
+      currentIdentityTuple: identityTuple,
+      expectedIdentityTuple: identityTuple,
+      findings: [makeFinding('cf-1')],
+      coverageManifest: makeCoverageManifest(),
+      anyRequiredStageFailed: false,
+      reviewBatchLimits,
+      ...engineCtx,
+    });
+
+    expect(octokit.rest.pulls.dismissReview).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: 'octo', repo: 'repo', pull_number: 42, review_id: 777 }),
+    );
+    expect(octokit.rest.pulls.updateReview).not.toHaveBeenCalled();
+  });
+
+  it('falls back to editing the body when dismissing a stale CHANGES_REQUESTED review is rejected with 403 (branch protection)', async () => {
+    const octokit = makeMockOctokit({
+      listReviews: [{ id: 777, state: 'CHANGES_REQUESTED', body: encodeBatchMarker({ reviewSetId: 'old-set', batchIndex: 0, batchCount: 1, digest: 'abc' }) }],
+    });
+    octokit.rest.pulls.dismissReview = vi.fn().mockRejectedValue(Object.assign(new Error('forbidden'), { status: 403 }));
+
+    await executePublish({
+      octokit: octokit as never,
+      owner: 'octo',
+      repo: 'repo',
+      prNumber: 42,
+      currentIdentityTuple: identityTuple,
+      expectedIdentityTuple: identityTuple,
+      findings: [makeFinding('cf-1')],
+      coverageManifest: makeCoverageManifest(),
+      anyRequiredStageFailed: false,
+      reviewBatchLimits,
+      ...engineCtx,
+    });
+
+    expect(octokit.rest.pulls.dismissReview).toHaveBeenCalled();
+    expect(octokit.rest.pulls.updateReview).toHaveBeenCalledWith(
+      expect.objectContaining({ review_id: 777 }),
+    );
+  });
+
+  it('propagates a non-403 error from dismissReview instead of silently falling back', async () => {
+    const octokit = makeMockOctokit({
+      listReviews: [{ id: 777, state: 'CHANGES_REQUESTED', body: encodeBatchMarker({ reviewSetId: 'old-set', batchIndex: 0, batchCount: 1, digest: 'abc' }) }],
+    });
+    const serverError = Object.assign(new Error('boom'), { status: 500 });
+    octokit.rest.pulls.dismissReview = vi.fn().mockRejectedValue(serverError);
+
+    await expect(
+      executePublish({
+        octokit: octokit as never,
+        owner: 'octo',
+        repo: 'repo',
+        prNumber: 42,
+        currentIdentityTuple: identityTuple,
+        expectedIdentityTuple: identityTuple,
+        findings: [makeFinding('cf-1')],
+        coverageManifest: makeCoverageManifest(),
+        anyRequiredStageFailed: false,
+        reviewBatchLimits,
+        ...engineCtx,
+      }),
+    ).rejects.toBe(serverError);
   });
 
   it('re-fetches the current diff and downgrades an unlocatable finding to the Review body instead of dropping it', async () => {

@@ -196,7 +196,7 @@ async function supersedeOldReviewSets(
     repo: string;
     prNumber: number;
     currentReviewSetId: string;
-    reviews: Array<{ id: number; body: string | null }>;
+    reviews: Array<{ id: number; body: string | null; state?: string }>;
   },
 ): Promise<void> {
   const staleReviews = params.reviews.filter((review) => {
@@ -214,13 +214,38 @@ async function supersedeOldReviewSets(
 
   for (const review of staleReviews) {
     const notice = `⚠️ 已被新一轮审核（review_set_id=${params.currentReviewSetId}）取代，请以下方最新 Review 为准。\n\n`;
-    await octokit.rest.pulls.updateReview({
-      owner: params.owner,
-      repo: params.repo,
-      pull_number: params.prNumber,
-      review_id: review.id,
-      body: notice + (review.body ?? ''),
-    });
+
+    // D-L211: only APPROVED/CHANGES_REQUESTED reviews are dismissable via the
+    // GitHub API at all. Try dismiss first — it's the "correct" supersession
+    // signal in the PR UI — but a repo with "restrict who can dismiss
+    // reviews" branch protection will reject a plain GITHUB_TOKEN identity
+    // with 403; that's not a failure, it's the documented degrade path to
+    // editing the review body instead.
+    let dismissed = false;
+    if (review.state === 'APPROVED' || review.state === 'CHANGES_REQUESTED') {
+      try {
+        await octokit.rest.pulls.dismissReview({
+          owner: params.owner,
+          repo: params.repo,
+          pull_number: params.prNumber,
+          review_id: review.id,
+          message: notice,
+        });
+        dismissed = true;
+      } catch (err) {
+        if ((err as { status?: number }).status !== 403) throw err;
+      }
+    }
+
+    if (!dismissed) {
+      await octokit.rest.pulls.updateReview({
+        owner: params.owner,
+        repo: params.repo,
+        pull_number: params.prNumber,
+        review_id: review.id,
+        body: notice + (review.body ?? ''),
+      });
+    }
 
     const commentsForReview = allComments.filter((c) => c.pull_request_review_id === review.id);
     for (const comment of commentsForReview) {

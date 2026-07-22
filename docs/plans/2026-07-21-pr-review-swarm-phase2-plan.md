@@ -194,7 +194,7 @@ export function isOwnedByThisBot(review: { body: string | null }): boolean; // d
 
 **已知简化 / 遗留待办（未在本轮 Task 2.3 范围内实现，供 Phase 3 或后续迭代跟进）：**
 1. inline comment 定位失败时降级到 Review body（design D-L215）未实现，当前直接信任 finding 的 path/line/side 直接建 inline comment。
-2. `engineRevision` 目前读取环境变量 `PR_REVIEW_SWARM_ENGINE_REVISION`，尚未在 esbuild 构建期注入真实 git short SHA（P2-D 提案的一部分），当前会退化为 `'unknown-engine-revision'`，需要在合并前补一个 esbuild `define` 步骤。
+2. ~~`engineRevision` 尚未接入真实构建期 git SHA~~ **已解决（2026-07-22），但采用了与 P2-D 提案不同的方案**：不在 esbuild 构建期嵌入 git SHA。原因：`dist/index.js` 与源码同一次提交，而 CI 的 `build-dist-no-drift` job 会在**该提交本身**上重新构建并 diff——本地构建时 `git rev-parse HEAD` 拿到的是提交前的父提交 SHA，CI 重建时该提交已存在、`HEAD` 就是它自己，两者永远不相等，任何触碰 `action/src` 的提交都会被误判为 dist 漂移，这是先有鸡先有蛋的结构性冲突，无法绕开。改为运行时读取 GitHub Actions 自动注入的 `GITHUB_ACTION_REF`（消费仓库 `uses: org/repo/action@<pinned-sha>` 实际解析到的 ref），零构建期成本、零漂移风险，语义上也更贴合"当前正在执行的引擎版本"本意，比构建者本地的 SHA 更准确。实现：`publish.ts` 新增纯函数 `resolveEngineRevision(env)`，优先级 `GITHUB_ACTION_REF` → `PR_REVIEW_SWARM_ENGINE_REVISION`（保留作手动覆盖/本地调试用）→ `'unknown-engine-revision'`，4 个单测覆盖。
 3. Task 2.3 验收标准里"本次运行内重复调用（模拟重试）"用测试模拟了跨两次 `executePublish` 调用的对账，未测试单次调用内因网络错误重试的路径（`maxPublishRetries` 语义，P2-G 提案的退避重试尚未实现，目前 API 调用失败会直接向上抛出，导致整个 publish 失败，这是保守但尚不完整的行为）。
 
 ---

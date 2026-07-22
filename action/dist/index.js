@@ -37658,6 +37658,7 @@ var publish_exports = {};
 __export(publish_exports, {
   buildPublishResult: () => buildPublishResult,
   executePublish: () => executePublish,
+  resolveEngineRevision: () => resolveEngineRevision,
   run: () => run5
 });
 function buildMarkdownSummary(verdictSummary, findings) {
@@ -37858,6 +37859,9 @@ async function executePublish(input) {
   );
   return result;
 }
+function resolveEngineRevision(env) {
+  return env.GITHUB_ACTION_REF || env.PR_REVIEW_SWARM_ENGINE_REVISION || "unknown-engine-revision";
+}
 async function run5() {
   const octokit = getOctokitFromInput();
   const owner = import_github5.context.repo.owner;
@@ -37906,7 +37910,7 @@ async function run5() {
     findings,
     coverageManifest,
     anyRequiredStageFailed,
-    engineRevision: process.env.PR_REVIEW_SWARM_ENGINE_REVISION ?? "unknown-engine-revision",
+    engineRevision: resolveEngineRevision(process.env),
     policyRevision: (0, import_node_crypto2.createHash)("sha256").update(JSON.stringify(central_limits_default)).digest("hex").slice(0, 12),
     model,
     schemaVersion: "finding-v1",

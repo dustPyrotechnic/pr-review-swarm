@@ -309,6 +309,22 @@ export async function executePublish(input: ExecutePublishInput): Promise<Publis
   return result;
 }
 
+// The engine revision identifies which pinned build of this action actually
+// produced a given verdict. We deliberately do NOT embed a git SHA at build
+// time (e.g. via an esbuild `define`): dist/index.js is committed alongside
+// its source, and the CI `build-dist-no-drift` job rebuilds dist from a
+// checkout of that same commit and diffs it — but `git rev-parse HEAD` at
+// local build time (before the commit exists) can never equal `git rev-parse
+// HEAD` during CI's rebuild (after the commit exists), so any build-time SHA
+// embed would drift on every single commit that touches action/src.
+// GITHUB_ACTION_REF is populated by GitHub Actions itself, at zero build-time
+// cost, with the exact ref the consuming repo's `uses: org/repo/action@<ref>`
+// resolved to — which is precisely "the pinned engine version currently
+// executing", with no drift risk at all.
+export function resolveEngineRevision(env: NodeJS.ProcessEnv): string {
+  return env.GITHUB_ACTION_REF || env.PR_REVIEW_SWARM_ENGINE_REVISION || 'unknown-engine-revision';
+}
+
 export async function run(): Promise<void> {
   const octokit = getOctokitFromInput();
   const owner = context.repo.owner;
@@ -373,7 +389,7 @@ export async function run(): Promise<void> {
     findings,
     coverageManifest,
     anyRequiredStageFailed,
-    engineRevision: process.env.PR_REVIEW_SWARM_ENGINE_REVISION ?? 'unknown-engine-revision',
+    engineRevision: resolveEngineRevision(process.env),
     policyRevision: createHash('sha256').update(JSON.stringify(centralLimits)).digest('hex').slice(0, 12),
     model,
     schemaVersion: 'finding-v1',

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { buildPublishResult, executePublish } from './publish.js';
+import { buildPublishResult, executePublish, resolveEngineRevision } from './publish.js';
 import { validate } from '../lib/schema-validator.js';
 import { encodeBatchMarker } from '../lib/hidden-marker.js';
 import { computeFindingsDigest } from '../lib/review-set-id.js';
@@ -106,6 +106,30 @@ describe('buildPublishResult', () => {
 
     expect(result.markdownSummary).toContain('changes_requested');
     expect(result.markdownSummary).toContain('src/foo.ts');
+  });
+});
+
+describe('resolveEngineRevision', () => {
+  it('prefers GITHUB_ACTION_REF — the exact pinned SHA the consuming repo\'s `uses:` line resolved to', () => {
+    const revision = resolveEngineRevision({
+      GITHUB_ACTION_REF: 'abc1234',
+      PR_REVIEW_SWARM_ENGINE_REVISION: 'should-not-be-used',
+    });
+    expect(revision).toBe('abc1234');
+  });
+
+  it('falls back to PR_REVIEW_SWARM_ENGINE_REVISION when GITHUB_ACTION_REF is unset', () => {
+    const revision = resolveEngineRevision({ PR_REVIEW_SWARM_ENGINE_REVISION: 'manual-override' });
+    expect(revision).toBe('manual-override');
+  });
+
+  it('falls back to unknown-engine-revision when neither is set', () => {
+    expect(resolveEngineRevision({})).toBe('unknown-engine-revision');
+  });
+
+  it('ignores an empty-string GITHUB_ACTION_REF and falls through', () => {
+    const revision = resolveEngineRevision({ GITHUB_ACTION_REF: '', PR_REVIEW_SWARM_ENGINE_REVISION: 'fallback' });
+    expect(revision).toBe('fallback');
   });
 });
 

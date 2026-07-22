@@ -36,7 +36,7 @@ jobs:
       # path and <pinned-sha> with the commit SHA you've reviewed and trust
       # (see docs/AGENTS.md and the design doc's "pinned commit SHA" rule).
       # Every `uses:` line below must be updated together when you re-pin.
-      - uses: dustPyrotechnic/pr-review-swarm/action@047ccee8e59d1d10a3c97a0f44bf3e7657f1fb36
+      - uses: dustPyrotechnic/pr-review-swarm/action@a69e33dce1d01c491aeb6b1f0b7c7ab80cc31449
         id: run
         with:
           entrypoint: status-start
@@ -55,7 +55,7 @@ jobs:
       incomplete: ${{ steps.run.outputs.incomplete }}
       prepare_artifact: ${{ steps.run.outputs.prepare_artifact }}
     steps:
-      - uses: dustPyrotechnic/pr-review-swarm/action@047ccee8e59d1d10a3c97a0f44bf3e7657f1fb36
+      - uses: dustPyrotechnic/pr-review-swarm/action@a69e33dce1d01c491aeb6b1f0b7c7ab80cc31449
         id: run
         with:
           entrypoint: prepare
@@ -77,7 +77,7 @@ jobs:
       findings: ${{ steps.run.outputs.findings }}
       coverage_manifest: ${{ steps.run.outputs.coverage_manifest }}
     steps:
-      - uses: dustPyrotechnic/pr-review-swarm/action@047ccee8e59d1d10a3c97a0f44bf3e7657f1fb36
+      - uses: dustPyrotechnic/pr-review-swarm/action@a69e33dce1d01c491aeb6b1f0b7c7ab80cc31449
         id: run
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
@@ -97,7 +97,7 @@ jobs:
     outputs:
       verdict: ${{ steps.run.outputs.verdict }}
     steps:
-      - uses: dustPyrotechnic/pr-review-swarm/action@047ccee8e59d1d10a3c97a0f44bf3e7657f1fb36
+      - uses: dustPyrotechnic/pr-review-swarm/action@a69e33dce1d01c491aeb6b1f0b7c7ab80cc31449
         id: run
         with:
           entrypoint: publish
@@ -116,7 +116,7 @@ jobs:
     permissions:
       checks: write
     steps:
-      - uses: dustPyrotechnic/pr-review-swarm/action@047ccee8e59d1d10a3c97a0f44bf3e7657f1fb36
+      - uses: dustPyrotechnic/pr-review-swarm/action@a69e33dce1d01c491aeb6b1f0b7c7ab80cc31449
         with:
           entrypoint: status-finalize
           github_token: ${{ secrets.GITHUB_TOKEN }}

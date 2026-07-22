@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { runAnalysis } from './analyze.js';
 import { validate } from '../lib/schema-validator.js';
@@ -413,5 +416,16 @@ describe('runAnalysis', () => {
     expect(result.internalDiagnostics).toContainEqual(
       expect.objectContaining({ id: 'cf-dropped', outcome: 'rejected_verifier' }),
     );
+  });
+});
+
+describe('analyze.ts never holds GitHub write credentials', () => {
+  it('does not import @actions/github — no PR comment or Review can be posted while analysis is running', () => {
+    const source = readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), 'analyze.ts'),
+      'utf-8',
+    );
+    expect(source).not.toContain('@actions/github');
+    expect(source).not.toContain('getOctokit');
   });
 });

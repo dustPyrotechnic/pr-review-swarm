@@ -867,6 +867,8 @@ jobs:
 
 ## Phase 3：启用 REQUEST_CHANGES/APPROVE
 
+> **状态：已完成（2026-07-22）。** Task 3.1-3.4 全部落地，TDD 流程 + 沙盒仓库端到端验证（`dustPyrotechnic/pr-review-swarm` PR #5/#6）。详细清单见 `action/test/integration/CHECKLIST.md`。Task 3.4 审计过程中发现并修复一个 Phase 2 遗留缺口：`supersedeOldReviewSets` 此前从未真正调用 `dismissReview`，一律走编辑 body 路径；已按设计文档 L211 补齐"先 dismiss、403 时降级编辑"的分支。另发现一个与本阶段无关的既有问题：analyze 阶段对纯文档 diff 会偶发 `any_required_stage_failed`（详见 CHECKLIST.md"已知问题"），留待后续单独排查。
+
 ### Task 3.1：真实裁决事件
 
 **Files:**

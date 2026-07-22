@@ -1,6 +1,6 @@
 # PR Review Swarm — Phase 2（Comment-only）实施方案
 
-> **状态：草案，待您确认。本文档只做方案设计，不写实现代码。**
+> **状态：已完成（2026-07-22）。Task 2.0-2.5 全部落地，含沙盒仓库端到端集成测试。**
 > 依据：`docs/plans/2026-07-13-pr-review-swarm-design.md`（"批量发布与 GitHub 对象"节，design 文档行号下称 D-L*）+ `docs/plans/2026-07-18-pr-review-swarm-implementation-plan.md`（Task 2.1-2.3，下称 plan 文档）。
 
 ## 0. 前提与范围
@@ -172,7 +172,7 @@ export function isOwnedByThisBot(review: { body: string | null }): boolean; // d
 
 ## 3. 实现阶段记录
 
-> 本节为进度追踪表。**当前状态：代码侧（Task 2.0-2.3b）已在 worktree `feature/phase2-comment-only` 中按 TDD 完成并全部验证通过；2.4/2.5 是人工/沙盒仓库任务，尚未执行。**
+> 本节为进度追踪表。**当前状态：Task 2.0-2.5 全部完成。Phase 2 已在真实沙盒仓库（dustPyrotechnic/pr-review-swarm）端到端验证通过。**
 
 | 阶段 | Task | 状态 | 备注 / commit |
 |------|------|------|----------------|
@@ -181,8 +181,8 @@ export function isOwnedByThisBot(review: { body: string | null }): boolean; // d
 | 2.2 | `review-set-id.ts` / `publish-manifest.ts` / `hidden-marker.ts` + 测试 | ✅ 完成 | TDD 过程中发现并修正两个真实 bug：① `review_set_id` 最初误用 id-only 摘要，同 id 不同内容不会变化，已改为对 finding 全内容摘要；② `hidden-marker.ts` 正则字符类 `[^\s-]+` 意外排除连字符，导致带 `-` 的 digest 解析失败，已改为 `\S+?` |
 | 2.3 | `publish.ts` 真实写入路径 + 测试 | ✅ 完成 | 12 个用例：stale 不写、单批/多批发布、digest 对账跳过/不一致判 incomplete、旧 review_set_id 追加取代说明、Phase 2 事件锁（不出现 `REQUEST_CHANGES`/`APPROVE` 赋值）。已知简化：inline comment 直接信任 finding 的 `path/line/side`，未实现"定位失败降级到 body"（design D-L215），记入下方待办 |
 | 2.3b | `reusable-pr-review.yml` 权限更新 | ✅ 完成 | `publish` Job 追加 `pull-requests: write`/`issues: write`；`publish` 步骤新增 `model` input（`review_set_id` 派生需要） |
-| 2.4 | 集成测试（沙盒仓库人工验证，plan 文档 Task 2.3 验收标准最后一条） | ⬜ 未开始 | 需要您在沙盒仓库执行，非代码可完成 |
-| 2.5 | Phase 2 退出检查（对照 plan 文档"上线门槛②"，确认评论/inline comment 正常出现且审核状态不受影响） | ⬜ 未开始 | |
+| 2.4 | 集成测试（沙盒仓库人工验证，plan 文档 Task 2.3 验收标准最后一条） | ✅ 完成（2026-07-22） | 在 `dustPyrotechnic/pr-review-swarm` 沙盒仓库用 gh CLI 开测试 PR 跑通全链路，过程中发现并修复 5 个真实 bug，详见下方"沙盒集成测试记录" |
+| 2.5 | Phase 2 退出检查（对照 plan 文档"上线门槛②"，确认评论/inline comment 正常出现且审核状态不受影响） | ✅ 完成（2026-07-22） | PR #2 端到端验证：4 条真实 finding 正确以 inline comment 出现，定位精准；摘要评论 verdict 如实显示 `changes_requested`；Review event 全部是 `COMMENTED`；`reviewDecision` 为空、`mergeable: MERGEABLE`，PR 审核状态未受影响；Check Run 如实反映真实 verdict（`failure`），与 PR 审核区域解耦 |
 
 状态取值：⬜ 未开始 / 🔶 进行中 / ✅ 完成 / ⚠️ 阻塞（附阻塞原因）。
 
@@ -196,6 +196,18 @@ export function isOwnedByThisBot(review: { body: string | null }): boolean; // d
 1. ~~inline comment 定位失败时降级到 Review body（design D-L215）未实现~~ **已解决（2026-07-22）**：新增 `action/src/lib/inline-comment-locator.ts` 的纯函数 `isFindingLocatable(finding, fileDiffs)`，按 D-L191 的要求由 `executePublish` 在发布前重新拉取当前 `pull_number` 的 `pulls.listFiles`（不复用 analyze 阶段的 artifact）、用既有 `diff-parser.ts` 解析出每个文件的 hunk，逐条 finding 校验 `path/line/side`（以及可选的 `start_line/start_side`）是否仍落在某个 hunk 内。可定位的进 `comments` 走 inline；不可定位的（改名、删除、hunk 漂移）整条追加到该批 Review body 的"未能定位到具体行的问题"小节，不再被静默丢弃。9 个单测覆盖 locator 纯函数，另有 1 个 `executePublish` 集成用例覆盖"一条可定位 + 一条不可定位"的混合批次。
 2. ~~`engineRevision` 尚未接入真实构建期 git SHA~~ **已解决（2026-07-22），但采用了与 P2-D 提案不同的方案**：不在 esbuild 构建期嵌入 git SHA。原因：`dist/index.js` 与源码同一次提交，而 CI 的 `build-dist-no-drift` job 会在**该提交本身**上重新构建并 diff——本地构建时 `git rev-parse HEAD` 拿到的是提交前的父提交 SHA，CI 重建时该提交已存在、`HEAD` 就是它自己，两者永远不相等，任何触碰 `action/src` 的提交都会被误判为 dist 漂移，这是先有鸡先有蛋的结构性冲突，无法绕开。改为运行时读取 GitHub Actions 自动注入的 `GITHUB_ACTION_REF`（消费仓库 `uses: org/repo/action@<pinned-sha>` 实际解析到的 ref），零构建期成本、零漂移风险，语义上也更贴合"当前正在执行的引擎版本"本意，比构建者本地的 SHA 更准确。实现：`publish.ts` 新增纯函数 `resolveEngineRevision(env)`，优先级 `GITHUB_ACTION_REF` → `PR_REVIEW_SWARM_ENGINE_REVISION`（保留作手动覆盖/本地调试用）→ `'unknown-engine-revision'`，4 个单测覆盖。
 3. ~~单次调用内因网络错误重试的路径（`maxPublishRetries` 语义）未实现~~ **已解决（2026-07-22）**：新增通用 `action/src/lib/retry.ts` 的 `withRetry(fn, options)`（指数退避 + 抖动，逻辑与 `deepseek-client.ts` 现有重试保持一致的形状，未做进一步抽象合并——两处触发重试的错误分类不同，没有强行复用的必要），默认对 429/5xx/无 status 的网络错误重试，4xx 校验类错误不重试直接抛出。`executePublish` 用它包住每一批的 `pulls.createReview` 调用，重试次数取 `central-limits.json` 的 `maxPublishRetries`（默认 5）。7 个 `retry.ts` 单测 + 3 个 `executePublish` 集成用例（瞬时错误重试后成功、耗尽重试次数后向上抛出、非重试类错误不重试）。P2-G 提到的"跨批次 digest 对账"仍是另一套独立机制，两者不合并，已在代码注释里说明区分。
+
+**沙盒集成测试记录（`dustPyrotechnic/pr-review-swarm`，2026-07-22，Task 2.4/2.5）：**
+
+用 gh CLI 在沙盒仓库开测试 PR 跑真实 workflow，前后经历两轮 PR（#1 排查环境/配置问题并顺带挖出真实代码 bug；#2 修完后做最终端到端验证），一共发现并修复 5 个真实 bug，全部已推到 master：
+
+1. **caller workflow 缺 `permissions:` 声明 → `startup_failure`**：仓库 `default_workflow_permissions` 是 `read`，caller job 未声明权限时，整条调用链的 token 上限被压到只读，而内部 `publish`/`status-start`/`status-finalize` 要写权限，GitHub 在解析调用链阶段直接拒绝整个 run（0 job、无日志）。修复：给 `pr-review-caller.yml` 的 `review`/`watchdog` job 显式声明所需 `permissions:`。
+2. **`.github/pr-review-swarm.yml` 缺失 → gate 直接拒绝**：`status-start` 按 PR 的 `base.sha` 读取仓库级配置文件，缺失时 `enabled` 默认 `false`，所有 job 被跳过。同时发现 PR 的 `base.sha` 是创建时的快照，不会随 master 前进自动刷新，需要给 PR 分支推新 commit 触发 `synchronize` 才会重新读取。修复：master 上补齐该配置文件（`enabled: true`）。
+3. **`skill-loader.ts` 在打包成 CJS 的 dist 产物下崩溃**：`GITHUB_ACTION_PATH` 对纯 JS action（`using: node20`）不保证被设置（不同于 composite action），原 fallback 依赖 `import.meta.url`，但 esbuild 打包成 CJS 后这个值恒为空（build 时早有警告，只是从未被触发过）。修复：改用 `__dirname`（真实 CJS 运行时全局变量），并按目录名（`dist` vs 源码目录）动态判断相对层级，兼容 Vitest 下 `__dirname` 也存在但指向源码目录的情况。
+4. **DeepSeek 结构化输出不遵守 schema，导致每次都判定 `incomplete`**（最关键的一个，`analyze.ts` 按设计把这类错误静默吞掉，日志完全看不出原因，靠本地绕开 try/catch 直接调用 `runExpert`/`sendStructuredRequest` 才复现）：① `response_format: json_object` 只保证语法合法 JSON，不保证遵守嵌入 prompt 里的 schema，模型自己发挥了字段名；② `expert-output.schema.json` 的 `candidate_findings` 用 `$ref` 指向 `candidate-finding.schema.json` 的 `$id`（一个 DeepSeek 无法访问的 URI），模型收到裸 `$ref` 完全不知道该长什么样。修复：`deepseek-client.ts` 改用 `tools` + `tool_choice` 强制函数调用（比 `json_object` 更可靠地约束结构）；新增 `schema-dereferencer.ts` 在发给模型前把 `$ref` 内联展开（本地 ajv 校验路径不变，它本来就能正确解析 `$ref`）。
+5. 沙盒 fixture 本身触发的 lint 报错（`any` 类型），与 action 代码无关，只影响测试分支。
+
+修复过程严格 TDD：每个 bug 都先用 `npx vitest` 直接调用真实 DeepSeek API（或最小复现）确认根因，再补单测、改代码、`typecheck`/`lint`/`test` 全绿后才提交、重新 `npm run build`、重新 pin `action@<sha>` 引用。最终 PR #2 验证：4 条真实 finding（除零风险、不安全的类型断言等）正确以 inline comment 出现，摘要评论、Review event（全部 `COMMENTED`）、PR 审核状态（`reviewDecision` 为空）均符合 Phase 2 设计预期。
 
 ---
 

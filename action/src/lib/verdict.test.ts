@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeVerdict } from './verdict.js';
+import { computeVerdict, computeFinalReviewEvent } from './verdict.js';
 import type { CoverageManifest } from '../entrypoints/prepare.js';
 import type { Finding } from './arbiter.js';
 
@@ -120,5 +120,23 @@ describe('computeVerdict', () => {
     expect(result.incompleteReasons).toEqual(
       expect.arrayContaining(['hard_limit_hit', 'shards_incomplete', 'missing_patch_files']),
     );
+  });
+});
+
+describe('computeFinalReviewEvent', () => {
+  it('returns APPROVE for a pass verdict', () => {
+    expect(computeFinalReviewEvent('pass', 0)).toBe('APPROVE');
+  });
+
+  it('returns REQUEST_CHANGES for a changes_requested verdict', () => {
+    expect(computeFinalReviewEvent('changes_requested', 3)).toBe('REQUEST_CHANGES');
+  });
+
+  it('returns REQUEST_CHANGES for an incomplete verdict that still has verified findings', () => {
+    expect(computeFinalReviewEvent('incomplete', 1)).toBe('REQUEST_CHANGES');
+  });
+
+  it('returns none for an incomplete verdict with zero findings — nothing to request changes on', () => {
+    expect(computeFinalReviewEvent('incomplete', 0)).toBe('none');
   });
 });

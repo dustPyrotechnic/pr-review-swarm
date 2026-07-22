@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { runWatchdog, checkForPublishedFinalReview } from './watchdog.js';
 import { encodeExternalId } from '../lib/check-run.js';
+import { encodeBatchMarker } from '../lib/hidden-marker.js';
 
 const NOW = new Date('2026-07-20T12:00:00Z').getTime();
 
@@ -25,6 +26,7 @@ function makeOctokit(options: {
   commits?: Array<{ sha: string }>;
   checkRuns?: Array<{ id: number; status: string; started_at?: string; external_id?: string }>;
   workflowRunStatus?: string;
+  reviews?: Array<{ commit_id: string; state: string; body: string | null }>;
 }) {
   const commits = options.commits ?? [{ sha: 'headsha123' }];
   const checkRuns = options.checkRuns ?? [];
@@ -34,6 +36,7 @@ function makeOctokit(options: {
       pulls: {
         list: vi.fn().mockResolvedValue({ data: [{ number: 1, updated_at: isoMinutesAgo(1) }] }),
         listCommits: vi.fn().mockResolvedValue({ data: commits }),
+        listReviews: vi.fn().mockResolvedValue({ data: options.reviews ?? [] }),
       },
       checks: {
         listForRef: vi.fn().mockResolvedValue({ data: { check_runs: checkRuns } }),
@@ -56,9 +59,51 @@ const baseLimits = {
   maxPrsPerWatchdogRun: 50,
 };
 
-describe('checkForPublishedFinalReview (Phase 1 stub)', () => {
-  it('always returns null in Phase 1', async () => {
-    expect(await checkForPublishedFinalReview()).toBeNull();
+describe('checkForPublishedFinalReview', () => {
+  const params = { owner: 'octo', repo: 'repo', prNumber: 1, headSha: 'headsha123' };
+
+  it('returns null when there is no matching review for the given head_sha', async () => {
+    const octokit = makeOctokit({ reviews: [] });
+    expect(await checkForPublishedFinalReview(octokit as never, params)).toBeNull();
+  });
+
+  it('returns APPROVE when a bot-owned APPROVED review exists for the head_sha', async () => {
+    const marker = encodeBatchMarker({ reviewSetId: 'set-1', batchIndex: 0, batchCount: 1, digest: 'd' });
+    const octokit = makeOctokit({
+      reviews: [{ commit_id: 'headsha123', state: 'APPROVED', body: marker }],
+    });
+    expect(await checkForPublishedFinalReview(octokit as never, params)).toBe('APPROVE');
+  });
+
+  it('returns REQUEST_CHANGES when a bot-owned CHANGES_REQUESTED review exists for the head_sha', async () => {
+    const marker = encodeBatchMarker({ reviewSetId: 'set-1', batchIndex: 0, batchCount: 1, digest: 'd' });
+    const octokit = makeOctokit({
+      reviews: [{ commit_id: 'headsha123', state: 'CHANGES_REQUESTED', body: marker }],
+    });
+    expect(await checkForPublishedFinalReview(octokit as never, params)).toBe('REQUEST_CHANGES');
+  });
+
+  it('ignores a human-authored review without a bot marker', async () => {
+    const octokit = makeOctokit({
+      reviews: [{ commit_id: 'headsha123', state: 'APPROVED', body: 'looks good to me' }],
+    });
+    expect(await checkForPublishedFinalReview(octokit as never, params)).toBeNull();
+  });
+
+  it('ignores a bot review for a different head_sha (stale/older push)', async () => {
+    const marker = encodeBatchMarker({ reviewSetId: 'set-1', batchIndex: 0, batchCount: 1, digest: 'd' });
+    const octokit = makeOctokit({
+      reviews: [{ commit_id: 'some-older-sha', state: 'APPROVED', body: marker }],
+    });
+    expect(await checkForPublishedFinalReview(octokit as never, params)).toBeNull();
+  });
+
+  it('ignores a bot review left in COMMENT state (not a final verdict)', async () => {
+    const marker = encodeBatchMarker({ reviewSetId: 'set-1', batchIndex: 0, batchCount: 1, digest: 'd' });
+    const octokit = makeOctokit({
+      reviews: [{ commit_id: 'headsha123', state: 'COMMENTED', body: marker }],
+    });
+    expect(await checkForPublishedFinalReview(octokit as never, params)).toBeNull();
   });
 });
 
@@ -146,6 +191,29 @@ describe('runWatchdog', () => {
     });
 
     expect(results[0]?.commitHistoryTruncated).toBe(false);
+  });
+
+  it('backfills a stale check to success when a published APPROVE review is found instead of timing it out', async () => {
+    const marker = encodeBatchMarker({ reviewSetId: 'set-1', batchIndex: 0, batchCount: 1, digest: 'd' });
+    const octokit = makeOctokit({
+      checkRuns: [
+        { id: 111, status: 'in_progress', started_at: isoMinutesAgo(60), external_id: makeExternalId('1000') },
+      ],
+      workflowRunStatus: 'completed',
+      reviews: [{ commit_id: 'headsha123', state: 'APPROVED', body: marker }],
+    });
+
+    const results = await runWatchdog(octokit as never, {
+      owner: 'octo',
+      repo: 'repo',
+      nowMs: NOW,
+      limits: baseLimits,
+    });
+
+    expect(octokit.rest.checks.update).toHaveBeenCalledWith(
+      expect.objectContaining({ check_run_id: 111, conclusion: 'success' }),
+    );
+    expect(results[0]?.finalizedCheckRunIds).toEqual([111]);
   });
 
   it('finalizes other stale checks even when one workflow-run lookup fails (e.g. a deleted run)', async () => {

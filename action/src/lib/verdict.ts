@@ -37,3 +37,12 @@ export function computeVerdict(input: ComputeVerdictInput): ComputeVerdictResult
 
   return { verdict: 'pass', incompleteReasons: [] };
 }
+
+export function computeFinalReviewEvent(
+  verdict: Verdict,
+  finalFindingsCount: number,
+): 'APPROVE' | 'REQUEST_CHANGES' | 'none' {
+  if (verdict === 'pass') return 'APPROVE';
+  if (verdict === 'changes_requested') return 'REQUEST_CHANGES';
+  return finalFindingsCount > 0 ? 'REQUEST_CHANGES' : 'none';
+}

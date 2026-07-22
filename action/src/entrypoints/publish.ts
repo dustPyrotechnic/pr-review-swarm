@@ -3,6 +3,7 @@ import * as core from '@actions/core';
 import { context, getOctokit } from '@actions/github';
 import centralLimits from '../../config/central-limits.json' with { type: 'json' };
 import { getOctokitFromInput } from '../lib/github-client.js';
+import { loadRepoConfig } from '../lib/repo-config.js';
 import {
   fetchIdentityTuple,
   identityTuplesEqual,
@@ -10,7 +11,8 @@ import {
   type IdentityTuple,
   type SchemaIdentityTuple,
 } from '../lib/identity-tuple.js';
-import { computeVerdict, type Verdict } from '../lib/verdict.js';
+import { computeVerdict, computeFinalReviewEvent, type Verdict } from '../lib/verdict.js';
+import { buildIncompleteBanner } from '../lib/incomplete-banner.js';
 import { computeReviewSetId } from '../lib/review-set-id.js';
 import { planReviewBatches, type ReviewBatch, type ReviewBatchLimits } from '../lib/publish-manifest.js';
 import { decodeBatchMarker, encodeBatchMarker } from '../lib/hidden-marker.js';
@@ -51,7 +53,13 @@ export interface PublishCoreResult {
 }
 
 function buildMarkdownSummary(verdictSummary: VerdictSummary, findings: Finding[]): string {
-  const lines = ['# PR Review Swarm', '', `**Verdict:** ${verdictSummary.verdict}`];
+  const lines = ['# PR Review Swarm', ''];
+
+  if (verdictSummary.verdict === 'incomplete' && verdictSummary.incomplete_reasons?.length) {
+    lines.push(buildIncompleteBanner(verdictSummary.incomplete_reasons), '');
+  }
+
+  lines.push(`**Verdict:** ${verdictSummary.verdict}`);
 
   if (verdictSummary.incomplete_reasons?.length) {
     lines.push(`**Incomplete reasons:** ${verdictSummary.incomplete_reasons.join(', ')}`);
@@ -93,12 +101,7 @@ export function buildPublishResult(input: PublishCoreInput): PublishCoreResult {
     ...(incompleteReasons.length > 0 ? { incomplete_reasons: incompleteReasons } : {}),
     review_set_id: input.reviewSetId,
     final_findings_count: input.findings.length,
-    // PHASE 2: every non-stale run publishes at least one Review batch, and
-    // that batch's event is always COMMENT (see reusable-pr-review.yml —
-    // this Job never holds the intent to change PR review state; that only
-    // arrives in Phase 3, which replaces this fixed value with a real branch
-    // driven by `verdict`).
-    final_review_event: 'COMMENT',
+    final_review_event: computeFinalReviewEvent(verdict, input.findings.length),
   };
 
   return {
@@ -111,9 +114,14 @@ function buildBatchReviewBody(
   batch: ReviewBatch,
   reviewSetId: string,
   unlocatableFindings: Finding[],
+  incompleteReasons: string[] = [],
 ): string {
   const locatableCount = batch.findings.length - unlocatableFindings.length;
   const lines = [`## PR Review Swarm — batch ${batch.batchIndex + 1}/${batch.batchCount}`, ''];
+
+  if (incompleteReasons.length > 0) {
+    lines.push(buildIncompleteBanner(incompleteReasons), '');
+  }
 
   if (batch.findings.length === 0) {
     lines.push('No findings in this run.');
@@ -241,6 +249,7 @@ export interface ExecutePublishInput {
   model: string;
   schemaVersion: string;
   reviewBatchLimits: ReviewBatchLimits;
+  defaultMention?: string;
   // Per-call exponential-backoff retry count for transient GitHub API errors
   // (429/5xx/network) while publishing a single batch. This is distinct from
   // the cross-run digest reconciliation above it in this file — see P2-G in
@@ -279,66 +288,80 @@ export async function executePublish(input: ExecutePublishInput): Promise<Publis
     reviewSetId,
   });
 
-  const { data: existingReviews } = await input.octokit.rest.pulls.listReviews({
-    owner: input.owner,
-    repo: input.repo,
-    pull_number: input.prNumber,
-  });
+  // PHASE 3: an incomplete verdict with zero surviving findings has nothing
+  // to request changes on — only the summary comment is updated, no Review
+  // is submitted (see Task 3.1 in the Phase 3 plan).
+  if (result.verdictSummary.final_review_event !== 'none') {
+    const { data: existingReviews } = await input.octokit.rest.pulls.listReviews({
+      owner: input.owner,
+      repo: input.repo,
+      pull_number: input.prNumber,
+    });
 
-  await supersedeOldReviewSets(input.octokit, {
-    owner: input.owner,
-    repo: input.repo,
-    prNumber: input.prNumber,
-    currentReviewSetId: reviewSetId,
-    reviews: existingReviews,
-  });
+    await supersedeOldReviewSets(input.octokit, {
+      owner: input.owner,
+      repo: input.repo,
+      prNumber: input.prNumber,
+      currentReviewSetId: reviewSetId,
+      reviews: existingReviews,
+    });
 
-  const currentFileDiffs = await fetchCurrentFileDiffs(input.octokit, {
-    owner: input.owner,
-    repo: input.repo,
-    prNumber: input.prNumber,
-  });
+    const currentFileDiffs = await fetchCurrentFileDiffs(input.octokit, {
+      owner: input.owner,
+      repo: input.repo,
+      prNumber: input.prNumber,
+    });
 
-  const batches = planReviewBatches(input.findings, input.reviewBatchLimits);
-  const alreadyPublished = existingReviews
-    .map((review) => decodeBatchMarker(review.body))
-    .filter((marker): marker is NonNullable<typeof marker> => marker !== undefined)
-    .filter((marker) => marker.reviewSetId === reviewSetId);
+    const batches = planReviewBatches(input.findings, input.reviewBatchLimits);
+    const alreadyPublished = existingReviews
+      .map((review) => decodeBatchMarker(review.body))
+      .filter((marker): marker is NonNullable<typeof marker> => marker !== undefined)
+      .filter((marker) => marker.reviewSetId === reviewSetId);
 
-  for (const batch of batches) {
-    const existing = alreadyPublished.find((marker) => marker.batchIndex === batch.batchIndex);
-    if (existing) {
-      if (existing.digest === batch.findingsDigest) {
-        continue; // already published in this run_set — skip, don't republish
+    for (const batch of batches) {
+      const existing = alreadyPublished.find((marker) => marker.batchIndex === batch.batchIndex);
+      if (existing) {
+        if (existing.digest === batch.findingsDigest) {
+          continue; // already published in this run_set — skip, don't republish
+        }
+        // Should not happen: review_set_id already binds findings content, so a
+        // batch found under the *same* review_set_id must have the same digest.
+        // Treat any mismatch conservatively as incomplete and stop publishing
+        // further batches rather than silently overwriting.
+        result.verdictSummary.verdict = 'incomplete';
+        result.verdictSummary.incomplete_reasons = [
+          ...(result.verdictSummary.incomplete_reasons ?? []),
+          'digest_mismatch',
+        ];
+        break;
       }
-      // Should not happen: review_set_id already binds findings content, so a
-      // batch found under the *same* review_set_id must have the same digest.
-      // Treat any mismatch conservatively as incomplete and stop publishing
-      // further batches rather than silently overwriting.
-      result.verdictSummary.verdict = 'incomplete';
-      result.verdictSummary.incomplete_reasons = [
-        ...(result.verdictSummary.incomplete_reasons ?? []),
-        'digest_mismatch',
-      ];
-      break;
+
+      const unlocatable = batch.findings.filter((f) => !isFindingLocatable(f, currentFileDiffs));
+      const locatable = batch.findings.filter((f) => isFindingLocatable(f, currentFileDiffs));
+      // Only the final batch carries the real REQUEST_CHANGES/APPROVE event —
+      // earlier batches stay COMMENT so GitHub doesn't flip the PR's review
+      // state before all findings have actually been posted.
+      const isFinalBatch = batch.batchIndex === batch.batchCount - 1;
+      const event = isFinalBatch ? result.verdictSummary.final_review_event : 'COMMENT';
+      const bannerReasons =
+        isFinalBatch && result.verdictSummary.verdict === 'incomplete'
+          ? (result.verdictSummary.incomplete_reasons ?? [])
+          : [];
+
+      await withRetry(
+        () =>
+          input.octokit.rest.pulls.createReview({
+            owner: input.owner,
+            repo: input.repo,
+            pull_number: input.prNumber,
+            commit_id: input.currentIdentityTuple.headSha,
+            event,
+            body: buildBatchReviewBody(batch, reviewSetId, unlocatable, bannerReasons),
+            comments: buildInlineComments(locatable),
+          }),
+        { maxRetries: input.maxPublishRetries ?? 5, sleep: input.retrySleep },
+      );
     }
-
-    const unlocatable = batch.findings.filter((f) => !isFindingLocatable(f, currentFileDiffs));
-    const locatable = batch.findings.filter((f) => isFindingLocatable(f, currentFileDiffs));
-
-    await withRetry(
-      () =>
-        input.octokit.rest.pulls.createReview({
-          owner: input.owner,
-          repo: input.repo,
-          pull_number: input.prNumber,
-          commit_id: input.currentIdentityTuple.headSha,
-          event: 'COMMENT',
-          body: buildBatchReviewBody(batch, reviewSetId, unlocatable),
-          comments: buildInlineComments(locatable),
-        }),
-      { maxRetries: input.maxPublishRetries ?? 5, sleep: input.retrySleep },
-    );
   }
 
   const summaryCtx: SummaryCommentContext = {
@@ -353,6 +376,9 @@ export async function executePublish(input: ExecutePublishInput): Promise<Publis
     schemaVersion: input.schemaVersion,
     verdict: result.verdictSummary.verdict,
     reviewSetId,
+    ...(result.verdictSummary.final_review_event === 'APPROVE' && input.defaultMention
+      ? { defaultMention: input.defaultMention }
+      : {}),
   };
   await upsertSummaryComment(
     input.octokit,
@@ -433,6 +459,8 @@ export async function run(): Promise<void> {
   const anyRequiredStageFailed = core.getInput('any_required_stage_failed') === 'true';
   const model = core.getInput('model') || 'unknown-model';
 
+  const repoConfig = await loadRepoConfig(octokit, owner, repo, currentIdentityTuple.baseSha);
+
   const result = await executePublish({
     octokit,
     owner,
@@ -442,6 +470,7 @@ export async function run(): Promise<void> {
     expectedIdentityTuple,
     findings,
     coverageManifest,
+    defaultMention: repoConfig.default_mention,
     anyRequiredStageFailed,
     engineRevision: resolveEngineRevision(process.env),
     policyRevision: createHash('sha256').update(JSON.stringify(centralLimits)).digest('hex').slice(0, 12),

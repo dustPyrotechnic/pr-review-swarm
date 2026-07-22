@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { buildPublishResult, executePublish, resolveEngineRevision } from './publish.js';
 import { validate } from '../lib/schema-validator.js';
@@ -60,25 +57,37 @@ const baseInput = {
 };
 
 describe('buildPublishResult', () => {
-  it('produces a schema-valid verdict summary for the pass case', () => {
+  it('produces a schema-valid verdict summary for the pass case, with final_review_event APPROVE', () => {
     const result = buildPublishResult({ ...baseInput, findings: [] });
 
     expect(result.verdictSummary.verdict).toBe('pass');
-    // Phase 2: every non-stale run publishes at least an empty COMMENT batch.
-    expect(result.verdictSummary.final_review_event).toBe('COMMENT');
+    expect(result.verdictSummary.final_review_event).toBe('APPROVE');
     const validation = validate('https://pr-review-swarm/schemas/verdict.schema.json', result.verdictSummary);
     expect(validation.valid).toBe(true);
   });
 
-  it('reports changes_requested when there are findings, with final_review_event fixed to COMMENT (Phase 2 never emits REQUEST_CHANGES/APPROVE)', () => {
+  it('reports changes_requested with final_review_event REQUEST_CHANGES when there are findings', () => {
     const result = buildPublishResult({ ...baseInput, findings: [makeFinding('cf-1')] });
 
     expect(result.verdictSummary.verdict).toBe('changes_requested');
     expect(result.verdictSummary.final_findings_count).toBe(1);
-    expect(result.verdictSummary.final_review_event).toBe('COMMENT');
+    expect(result.verdictSummary.final_review_event).toBe('REQUEST_CHANGES');
   });
 
-  it('reports incomplete with reasons when coverage was not complete', () => {
+  it('reports incomplete with reasons when coverage was not complete, with REQUEST_CHANGES when findings survived', () => {
+    const result = buildPublishResult({
+      ...baseInput,
+      coverageManifest: makeCoverageManifest({ shards_complete: false }),
+      findings: [makeFinding('cf-1')],
+    });
+
+    expect(result.verdictSummary.verdict).toBe('incomplete');
+    expect(result.verdictSummary.incomplete_reasons).toContain('shards_incomplete');
+    expect(result.verdictSummary.final_review_event).toBe('REQUEST_CHANGES');
+    expect(result.markdownSummary).toContain('⚠️ 本次审核未完整覆盖');
+  });
+
+  it('reports incomplete with final_review_event none when there are zero surviving findings', () => {
     const result = buildPublishResult({
       ...baseInput,
       coverageManifest: makeCoverageManifest({ shards_complete: false }),
@@ -86,7 +95,7 @@ describe('buildPublishResult', () => {
     });
 
     expect(result.verdictSummary.verdict).toBe('incomplete');
-    expect(result.verdictSummary.incomplete_reasons).toContain('shards_incomplete');
+    expect(result.verdictSummary.final_review_event).toBe('none');
   });
 
   it('reports stale_cancelled when the re-fetched identity tuple no longer matches the locked one', () => {
@@ -130,28 +139,6 @@ describe('resolveEngineRevision', () => {
   it('ignores an empty-string GITHUB_ACTION_REF and falls through', () => {
     const revision = resolveEngineRevision({ GITHUB_ACTION_REF: '', PR_REVIEW_SWARM_ENGINE_REVISION: 'fallback' });
     expect(revision).toBe('fallback');
-  });
-});
-
-describe('publish.ts Phase 2 event-lock', () => {
-  it('never assigns event/final_review_event to REQUEST_CHANGES or APPROVE — Phase 2 only ever publishes COMMENT', () => {
-    // The VerdictSummary/schema type union legitimately spells out
-    // REQUEST_CHANGES/APPROVE as future-valid values (Phase 3 will add real
-    // branches), so this lock strips the `interface VerdictSummary` type
-    // declaration line before scanning the remaining runtime code for actual
-    // assignments of those literals.
-    const source = readFileSync(
-      path.join(path.dirname(fileURLToPath(import.meta.url)), 'publish.ts'),
-      'utf-8',
-    );
-    const runtimeSource = source
-      .split('\n')
-      .filter((line) => !line.includes("'APPROVE' | 'REQUEST_CHANGES'"))
-      .join('\n');
-
-    expect(runtimeSource).not.toContain('REQUEST_CHANGES');
-    expect(runtimeSource).not.toContain("'APPROVE'");
-    expect(runtimeSource).not.toContain('"APPROVE"');
   });
 });
 
@@ -218,7 +205,7 @@ describe('executePublish', () => {
     expect(octokit.rest.issues.createComment).not.toHaveBeenCalled();
   });
 
-  it('publishes a single COMMENT batch and upserts the summary comment when everything fits', async () => {
+  it('publishes a single REQUEST_CHANGES batch and upserts the summary comment when there are findings', async () => {
     const octokit = makeMockOctokit();
     const result = await executePublish({
       octokit: octokit as never,
@@ -236,10 +223,80 @@ describe('executePublish', () => {
 
     expect(octokit.rest.pulls.createReview).toHaveBeenCalledTimes(1);
     expect(octokit.rest.pulls.createReview).toHaveBeenCalledWith(
-      expect.objectContaining({ owner: 'octo', repo: 'repo', pull_number: 42, event: 'COMMENT', commit_id: 'headsha123' }),
+      expect.objectContaining({ owner: 'octo', repo: 'repo', pull_number: 42, event: 'REQUEST_CHANGES', commit_id: 'headsha123' }),
     );
     expect(octokit.rest.issues.createComment).toHaveBeenCalledTimes(1);
-    expect(result.verdictSummary.final_review_event).toBe('COMMENT');
+    expect(result.verdictSummary.final_review_event).toBe('REQUEST_CHANGES');
+  });
+
+  it('publishes an APPROVE batch and mentions the configured default_mention when the verdict is pass', async () => {
+    const octokit = makeMockOctokit();
+    const result = await executePublish({
+      octokit: octokit as never,
+      owner: 'octo',
+      repo: 'repo',
+      prNumber: 42,
+      currentIdentityTuple: identityTuple,
+      expectedIdentityTuple: identityTuple,
+      findings: [],
+      coverageManifest: makeCoverageManifest(),
+      anyRequiredStageFailed: false,
+      reviewBatchLimits,
+      defaultMention: 'dustPyrotechnic',
+      ...engineCtx,
+    });
+
+    expect(octokit.rest.pulls.createReview).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'APPROVE' }),
+    );
+    expect(result.verdictSummary.final_review_event).toBe('APPROVE');
+    const summaryBody = octokit.rest.issues.createComment.mock.calls[0][0].body as string;
+    expect(summaryBody).toContain('@dustPyrotechnic');
+  });
+
+  it('only updates the summary comment, without submitting a Review, when incomplete with zero findings', async () => {
+    const octokit = makeMockOctokit();
+    const result = await executePublish({
+      octokit: octokit as never,
+      owner: 'octo',
+      repo: 'repo',
+      prNumber: 42,
+      currentIdentityTuple: identityTuple,
+      expectedIdentityTuple: identityTuple,
+      findings: [],
+      coverageManifest: makeCoverageManifest({ shards_complete: false }),
+      anyRequiredStageFailed: false,
+      reviewBatchLimits,
+      ...engineCtx,
+    });
+
+    expect(result.verdictSummary.verdict).toBe('incomplete');
+    expect(result.verdictSummary.final_review_event).toBe('none');
+    expect(octokit.rest.pulls.createReview).not.toHaveBeenCalled();
+    expect(octokit.rest.issues.createComment).toHaveBeenCalledTimes(1);
+    const summaryBody = octokit.rest.issues.createComment.mock.calls[0][0].body as string;
+    expect(summaryBody).toContain('⚠️ 本次审核未完整覆盖');
+  });
+
+  it('includes the incomplete banner in the Review body when incomplete but findings survived', async () => {
+    const octokit = makeMockOctokit();
+    await executePublish({
+      octokit: octokit as never,
+      owner: 'octo',
+      repo: 'repo',
+      prNumber: 42,
+      currentIdentityTuple: identityTuple,
+      expectedIdentityTuple: identityTuple,
+      findings: [makeFinding('cf-1')],
+      coverageManifest: makeCoverageManifest({ shards_complete: false }),
+      anyRequiredStageFailed: false,
+      reviewBatchLimits,
+      ...engineCtx,
+    });
+
+    const createReviewCall = octokit.rest.pulls.createReview.mock.calls[0][0];
+    expect(createReviewCall.event).toBe('REQUEST_CHANGES');
+    expect(createReviewCall.body).toContain('⚠️ 本次审核未完整覆盖');
   });
 
   it('splits into multiple createReview calls when the batch count limit is exceeded', async () => {

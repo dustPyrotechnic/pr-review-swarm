@@ -92,6 +92,33 @@ describe('buildSummaryCommentBody', () => {
     );
     expect(body).toContain('hard_limit_hit');
   });
+
+  it('shows the incomplete banner at the top when the verdict is incomplete', () => {
+    const body = buildSummaryCommentBody(
+      ctx,
+      { ...verdictSummary, verdict: 'incomplete', incomplete_reasons: ['hard_limit_hit'] },
+      [],
+    );
+    expect(body).toContain('⚠️ 本次审核未完整覆盖');
+  });
+
+  it('mentions the configured default_mention when the final review event is APPROVE', () => {
+    const body = buildSummaryCommentBody(
+      { ...ctx, defaultMention: 'dustPyrotechnic' },
+      { ...verdictSummary, verdict: 'pass', final_review_event: 'APPROVE', final_findings_count: 0 },
+      [],
+    );
+    expect(body).toContain('@dustPyrotechnic');
+  });
+
+  it('does not mention anyone when the final review event is not APPROVE, even if default_mention is set', () => {
+    const body = buildSummaryCommentBody(
+      { ...ctx, defaultMention: 'dustPyrotechnic' },
+      verdictSummary,
+      [makeFinding('f-1')],
+    );
+    expect(body).not.toContain('@dustPyrotechnic');
+  });
 });
 
 function makeMockOctokit(existingComments: Array<{ id: number; body: string }> = []) {

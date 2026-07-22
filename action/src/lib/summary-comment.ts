@@ -1,6 +1,7 @@
 import type { getOctokit } from '@actions/github';
 import type { Finding } from './arbiter.js';
 import type { VerdictSummary } from '../entrypoints/publish.js';
+import { buildIncompleteBanner } from './incomplete-banner.js';
 
 type Octokit = ReturnType<typeof getOctokit>;
 
@@ -16,6 +17,7 @@ export interface SummaryCommentContext {
   schemaVersion: string;
   verdict: string;
   reviewSetId: string;
+  defaultMention?: string;
 }
 
 const MAX_COMMENT_CHARS = 65536;
@@ -38,7 +40,13 @@ export function buildSummaryCommentBody(
   verdictSummary: VerdictSummary,
   findings: Finding[],
 ): string {
-  const lines = ['# PR Review Swarm', '', `**Verdict:** ${verdictSummary.verdict}`];
+  const lines = ['# PR Review Swarm', ''];
+
+  if (verdictSummary.verdict === 'incomplete' && verdictSummary.incomplete_reasons?.length) {
+    lines.push(buildIncompleteBanner(verdictSummary.incomplete_reasons), '');
+  }
+
+  lines.push(`**Verdict:** ${verdictSummary.verdict}`);
 
   if (verdictSummary.incomplete_reasons?.length) {
     lines.push(`**Incomplete reasons:** ${verdictSummary.incomplete_reasons.join(', ')}`);
@@ -51,6 +59,10 @@ export function buildSummaryCommentBody(
     for (const finding of findings) {
       lines.push(`- \`${finding.path}:${finding.line}\` [${finding.severity}] ${finding.title}`);
     }
+  }
+
+  if (verdictSummary.final_review_event === 'APPROVE' && ctx.defaultMention) {
+    lines.push('', `cc @${ctx.defaultMention}`);
   }
 
   lines.push('', findStableMarkerId(ctx), encodeResultMarker(ctx));

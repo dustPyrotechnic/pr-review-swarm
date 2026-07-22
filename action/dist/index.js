@@ -37567,8 +37567,30 @@ function computeVerdict(input) {
   }
   return { verdict: "pass", incompleteReasons: [] };
 }
+function computeFinalReviewEvent(verdict, finalFindingsCount) {
+  if (verdict === "pass")
+    return "APPROVE";
+  if (verdict === "changes_requested")
+    return "REQUEST_CHANGES";
+  return finalFindingsCount > 0 ? "REQUEST_CHANGES" : "none";
+}
 var init_verdict = __esm({
   "src/lib/verdict.ts"() {
+    "use strict";
+  }
+});
+
+// src/lib/incomplete-banner.ts
+function buildIncompleteBanner(reasons) {
+  return [
+    "\u26A0\uFE0F \u672C\u6B21\u5BA1\u6838\u672A\u5B8C\u6574\u8986\u76D6\uFF0C\u7ED3\u8BBA\u53EF\u80FD\u4E0D\u5B8C\u6574\u3002",
+    "",
+    "\u672A\u5B8C\u6210\u7684\u9636\u6BB5/\u8303\u56F4\uFF1A",
+    ...reasons.map((reason) => `- ${reason}`)
+  ].join("\n");
+}
+var init_incomplete_banner = __esm({
+  "src/lib/incomplete-banner.ts"() {
     "use strict";
   }
 });
@@ -37657,6 +37679,9 @@ function decodeBatchMarker(body) {
   }
   return { reviewSetId, batchIndex, batchCount, digest };
 }
+function isOwnedByThisBot(review) {
+  return decodeBatchMarker(review.body) !== void 0;
+}
 var MARKER_RE;
 var init_hidden_marker = __esm({
   "src/lib/hidden-marker.ts"() {
@@ -37742,7 +37767,11 @@ function encodeResultMarker(ctx) {
   return `<!-- pr-review-swarm:result;head_sha=${ctx.headSha};base_sha=${ctx.baseSha};engine_revision=${ctx.engineRevision};policy_revision=${ctx.policyRevision};model=${ctx.model};schema_version=${ctx.schemaVersion};verdict=${ctx.verdict};review_set_id=${ctx.reviewSetId} -->`;
 }
 function buildSummaryCommentBody(ctx, verdictSummary, findings) {
-  const lines = ["# PR Review Swarm", "", `**Verdict:** ${verdictSummary.verdict}`];
+  const lines = ["# PR Review Swarm", ""];
+  if (verdictSummary.verdict === "incomplete" && verdictSummary.incomplete_reasons?.length) {
+    lines.push(buildIncompleteBanner(verdictSummary.incomplete_reasons), "");
+  }
+  lines.push(`**Verdict:** ${verdictSummary.verdict}`);
   if (verdictSummary.incomplete_reasons?.length) {
     lines.push(`**Incomplete reasons:** ${verdictSummary.incomplete_reasons.join(", ")}`);
   }
@@ -37753,6 +37782,9 @@ function buildSummaryCommentBody(ctx, verdictSummary, findings) {
     for (const finding of findings) {
       lines.push(`- \`${finding.path}:${finding.line}\` [${finding.severity}] ${finding.title}`);
     }
+  }
+  if (verdictSummary.final_review_event === "APPROVE" && ctx.defaultMention) {
+    lines.push("", `cc @${ctx.defaultMention}`);
   }
   lines.push("", findStableMarkerId(ctx), encodeResultMarker(ctx));
   const body = lines.join("\n");
@@ -37800,6 +37832,7 @@ var MAX_COMMENT_CHARS;
 var init_summary_comment = __esm({
   "src/lib/summary-comment.ts"() {
     "use strict";
+    init_incomplete_banner();
     MAX_COMMENT_CHARS = 65536;
   }
 });
@@ -37813,7 +37846,11 @@ __export(publish_exports, {
   run: () => run5
 });
 function buildMarkdownSummary(verdictSummary, findings) {
-  const lines = ["# PR Review Swarm", "", `**Verdict:** ${verdictSummary.verdict}`];
+  const lines = ["# PR Review Swarm", ""];
+  if (verdictSummary.verdict === "incomplete" && verdictSummary.incomplete_reasons?.length) {
+    lines.push(buildIncompleteBanner(verdictSummary.incomplete_reasons), "");
+  }
+  lines.push(`**Verdict:** ${verdictSummary.verdict}`);
   if (verdictSummary.incomplete_reasons?.length) {
     lines.push(`**Incomplete reasons:** ${verdictSummary.incomplete_reasons.join(", ")}`);
   }
@@ -37849,21 +37886,19 @@ function buildPublishResult(input) {
     ...incompleteReasons.length > 0 ? { incomplete_reasons: incompleteReasons } : {},
     review_set_id: input.reviewSetId,
     final_findings_count: input.findings.length,
-    // PHASE 2: every non-stale run publishes at least one Review batch, and
-    // that batch's event is always COMMENT (see reusable-pr-review.yml —
-    // this Job never holds the intent to change PR review state; that only
-    // arrives in Phase 3, which replaces this fixed value with a real branch
-    // driven by `verdict`).
-    final_review_event: "COMMENT"
+    final_review_event: computeFinalReviewEvent(verdict, input.findings.length)
   };
   return {
     verdictSummary,
     markdownSummary: buildMarkdownSummary(verdictSummary, input.findings)
   };
 }
-function buildBatchReviewBody(batch, reviewSetId, unlocatableFindings) {
+function buildBatchReviewBody(batch, reviewSetId, unlocatableFindings, incompleteReasons = []) {
   const locatableCount = batch.findings.length - unlocatableFindings.length;
   const lines = [`## PR Review Swarm \u2014 batch ${batch.batchIndex + 1}/${batch.batchCount}`, ""];
+  if (incompleteReasons.length > 0) {
+    lines.push(buildIncompleteBanner(incompleteReasons), "");
+  }
   if (batch.findings.length === 0) {
     lines.push("No findings in this run.");
   } else if (locatableCount > 0) {
@@ -37976,52 +38011,57 @@ async function executePublish(input) {
     anyRequiredStageFailed: input.anyRequiredStageFailed,
     reviewSetId
   });
-  const { data: existingReviews } = await input.octokit.rest.pulls.listReviews({
-    owner: input.owner,
-    repo: input.repo,
-    pull_number: input.prNumber
-  });
-  await supersedeOldReviewSets(input.octokit, {
-    owner: input.owner,
-    repo: input.repo,
-    prNumber: input.prNumber,
-    currentReviewSetId: reviewSetId,
-    reviews: existingReviews
-  });
-  const currentFileDiffs = await fetchCurrentFileDiffs(input.octokit, {
-    owner: input.owner,
-    repo: input.repo,
-    prNumber: input.prNumber
-  });
-  const batches = planReviewBatches(input.findings, input.reviewBatchLimits);
-  const alreadyPublished = existingReviews.map((review) => decodeBatchMarker(review.body)).filter((marker) => marker !== void 0).filter((marker) => marker.reviewSetId === reviewSetId);
-  for (const batch of batches) {
-    const existing = alreadyPublished.find((marker) => marker.batchIndex === batch.batchIndex);
-    if (existing) {
-      if (existing.digest === batch.findingsDigest) {
-        continue;
+  if (result.verdictSummary.final_review_event !== "none") {
+    const { data: existingReviews } = await input.octokit.rest.pulls.listReviews({
+      owner: input.owner,
+      repo: input.repo,
+      pull_number: input.prNumber
+    });
+    await supersedeOldReviewSets(input.octokit, {
+      owner: input.owner,
+      repo: input.repo,
+      prNumber: input.prNumber,
+      currentReviewSetId: reviewSetId,
+      reviews: existingReviews
+    });
+    const currentFileDiffs = await fetchCurrentFileDiffs(input.octokit, {
+      owner: input.owner,
+      repo: input.repo,
+      prNumber: input.prNumber
+    });
+    const batches = planReviewBatches(input.findings, input.reviewBatchLimits);
+    const alreadyPublished = existingReviews.map((review) => decodeBatchMarker(review.body)).filter((marker) => marker !== void 0).filter((marker) => marker.reviewSetId === reviewSetId);
+    for (const batch of batches) {
+      const existing = alreadyPublished.find((marker) => marker.batchIndex === batch.batchIndex);
+      if (existing) {
+        if (existing.digest === batch.findingsDigest) {
+          continue;
+        }
+        result.verdictSummary.verdict = "incomplete";
+        result.verdictSummary.incomplete_reasons = [
+          ...result.verdictSummary.incomplete_reasons ?? [],
+          "digest_mismatch"
+        ];
+        break;
       }
-      result.verdictSummary.verdict = "incomplete";
-      result.verdictSummary.incomplete_reasons = [
-        ...result.verdictSummary.incomplete_reasons ?? [],
-        "digest_mismatch"
-      ];
-      break;
+      const unlocatable = batch.findings.filter((f) => !isFindingLocatable(f, currentFileDiffs));
+      const locatable = batch.findings.filter((f) => isFindingLocatable(f, currentFileDiffs));
+      const isFinalBatch = batch.batchIndex === batch.batchCount - 1;
+      const event = isFinalBatch ? result.verdictSummary.final_review_event : "COMMENT";
+      const bannerReasons = isFinalBatch && result.verdictSummary.verdict === "incomplete" ? result.verdictSummary.incomplete_reasons ?? [] : [];
+      await withRetry(
+        () => input.octokit.rest.pulls.createReview({
+          owner: input.owner,
+          repo: input.repo,
+          pull_number: input.prNumber,
+          commit_id: input.currentIdentityTuple.headSha,
+          event,
+          body: buildBatchReviewBody(batch, reviewSetId, unlocatable, bannerReasons),
+          comments: buildInlineComments(locatable)
+        }),
+        { maxRetries: input.maxPublishRetries ?? 5, sleep: input.retrySleep }
+      );
     }
-    const unlocatable = batch.findings.filter((f) => !isFindingLocatable(f, currentFileDiffs));
-    const locatable = batch.findings.filter((f) => isFindingLocatable(f, currentFileDiffs));
-    await withRetry(
-      () => input.octokit.rest.pulls.createReview({
-        owner: input.owner,
-        repo: input.repo,
-        pull_number: input.prNumber,
-        commit_id: input.currentIdentityTuple.headSha,
-        event: "COMMENT",
-        body: buildBatchReviewBody(batch, reviewSetId, unlocatable),
-        comments: buildInlineComments(locatable)
-      }),
-      { maxRetries: input.maxPublishRetries ?? 5, sleep: input.retrySleep }
-    );
   }
   const summaryCtx = {
     owner: input.owner,
@@ -38034,7 +38074,8 @@ async function executePublish(input) {
     model: input.model,
     schemaVersion: input.schemaVersion,
     verdict: result.verdictSummary.verdict,
-    reviewSetId
+    reviewSetId,
+    ...result.verdictSummary.final_review_event === "APPROVE" && input.defaultMention ? { defaultMention: input.defaultMention } : {}
   };
   await upsertSummaryComment(
     input.octokit,
@@ -38084,6 +38125,7 @@ async function run5() {
   };
   const anyRequiredStageFailed = core6.getInput("any_required_stage_failed") === "true";
   const model = core6.getInput("model") || "unknown-model";
+  const repoConfig = await loadRepoConfig(octokit, owner, repo, currentIdentityTuple.baseSha);
   const result = await executePublish({
     octokit,
     owner,
@@ -38093,6 +38135,7 @@ async function run5() {
     expectedIdentityTuple,
     findings,
     coverageManifest,
+    defaultMention: repoConfig.default_mention,
     anyRequiredStageFailed,
     engineRevision: resolveEngineRevision(process.env),
     policyRevision: (0, import_node_crypto2.createHash)("sha256").update(JSON.stringify(central_limits_default)).digest("hex").slice(0, 12),
@@ -38116,8 +38159,10 @@ var init_publish = __esm({
     import_github5 = __toESM(require_github(), 1);
     init_central_limits();
     init_github_client();
+    init_repo_config();
     init_identity_tuple();
     init_verdict();
+    init_incomplete_banner();
     init_review_set_id();
     init_publish_manifest();
     init_hidden_marker();
@@ -38191,8 +38236,18 @@ __export(watchdog_exports, {
   run: () => run7,
   runWatchdog: () => runWatchdog
 });
-async function checkForPublishedFinalReview() {
-  return null;
+async function checkForPublishedFinalReview(octokit, params) {
+  const { data: reviews } = await octokit.rest.pulls.listReviews({
+    owner: params.owner,
+    repo: params.repo,
+    pull_number: params.prNumber
+  });
+  const finalReview = reviews.find(
+    (review) => review.commit_id === params.headSha && isOwnedByThisBot(review) && (review.state === "APPROVED" || review.state === "CHANGES_REQUESTED")
+  );
+  if (!finalReview)
+    return null;
+  return finalReview.state === "APPROVED" ? "APPROVE" : "REQUEST_CHANGES";
 }
 async function finalizeStaleCheckRun(octokit, input, run9) {
   if (run9.status !== "in_progress")
@@ -38213,7 +38268,12 @@ async function finalizeStaleCheckRun(octokit, input, run9) {
     if (workflowRun.status === "queued" || workflowRun.status === "in_progress") {
       return void 0;
     }
-    const publishedReview = await checkForPublishedFinalReview();
+    const publishedReview = await checkForPublishedFinalReview(octokit, {
+      owner: input.owner,
+      repo: input.repo,
+      prNumber: externalId.prNumber,
+      headSha: externalId.headSha
+    });
     const conclusion = publishedReview === "APPROVE" ? "success" : publishedReview === "REQUEST_CHANGES" ? "failure" : "timed_out";
     await patchCheckConclusion(octokit, {
       owner: input.owner,
@@ -38290,6 +38350,7 @@ var init_watchdog = __esm({
     init_central_limits();
     init_check_run();
     init_github_client();
+    init_hidden_marker();
   }
 });
 

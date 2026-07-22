@@ -1,8 +1,9 @@
 import * as core from '@actions/core';
 import { getOctokit } from '@actions/github';
 import centralLimits from '../../config/central-limits.json' with { type: 'json' };
-import { listCheckRunsForRef, patchCheckConclusion } from '../lib/check-run.js';
+import { listCheckRunsForRef, patchCheckConclusion, type CheckRunExternalId } from '../lib/check-run.js';
 import { getOctokitFromInput } from '../lib/github-client.js';
+import { isOwnedByThisBot } from '../lib/hidden-marker.js';
 
 type Octokit = ReturnType<typeof getOctokit>;
 
@@ -26,21 +27,38 @@ export interface WatchdogPrResult {
 }
 
 /**
- * PHASE 1 STUB: publish never emits a real REQUEST_CHANGES/APPROVE Review yet
- * (see publish.ts), so there is no legitimate final Review to discover here.
- * Every stale in_progress check is therefore treated as a true orphan and
- * finalized as timed_out. Phase 3 (Task 3.3) replaces this with a real
- * octokit.rest.pulls.listReviews-based check for an already-published final
- * Review before deciding to finalize.
+ * Looks for an already-published final Review (APPROVE/REQUEST_CHANGES) on
+ * this PR for the exact head_sha the stale check run was watching, so a
+ * legitimately-completed publish job isn't misclassified as a true orphan
+ * and finalized as timed_out. Only reviews carrying this bot's hidden batch
+ * marker count — a human's own APPROVE/CHANGES_REQUESTED review must never
+ * be mistaken for the bot's verdict.
  */
-export async function checkForPublishedFinalReview(): Promise<'REQUEST_CHANGES' | 'APPROVE' | null> {
-  return null;
+export async function checkForPublishedFinalReview(
+  octokit: Octokit,
+  params: { owner: string; repo: string; prNumber: number; headSha: string },
+): Promise<'REQUEST_CHANGES' | 'APPROVE' | null> {
+  const { data: reviews } = await octokit.rest.pulls.listReviews({
+    owner: params.owner,
+    repo: params.repo,
+    pull_number: params.prNumber,
+  });
+
+  const finalReview = reviews.find(
+    (review) =>
+      review.commit_id === params.headSha &&
+      isOwnedByThisBot(review) &&
+      (review.state === 'APPROVED' || review.state === 'CHANGES_REQUESTED'),
+  );
+
+  if (!finalReview) return null;
+  return finalReview.state === 'APPROVED' ? 'APPROVE' : 'REQUEST_CHANGES';
 }
 
 async function finalizeStaleCheckRun(
   octokit: Octokit,
   input: WatchdogInput,
-  run: { id: number; status: string; startedAtMs?: number; externalId?: { runId: string } },
+  run: { id: number; status: string; startedAtMs?: number; externalId?: CheckRunExternalId },
 ): Promise<number | undefined> {
   if (run.status !== 'in_progress') return undefined;
 
@@ -61,7 +79,12 @@ async function finalizeStaleCheckRun(
       return undefined;
     }
 
-    const publishedReview = await checkForPublishedFinalReview();
+    const publishedReview = await checkForPublishedFinalReview(octokit, {
+      owner: input.owner,
+      repo: input.repo,
+      prNumber: externalId.prNumber,
+      headSha: externalId.headSha,
+    });
     const conclusion =
       publishedReview === 'APPROVE'
         ? 'success'

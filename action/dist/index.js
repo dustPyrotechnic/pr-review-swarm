@@ -36850,17 +36850,24 @@ function createDeepSeekClient(options) {
           },
           body: JSON.stringify({
             model: input.model,
-            response_format: { type: "json_object" },
             messages: [
-              {
-                role: "system",
-                content: `${input.systemPrompt}
-
-Respond with a single JSON object matching this JSON Schema:
-${JSON.stringify(input.jsonSchema)}`
-              },
+              { role: "system", content: input.systemPrompt },
               { role: "user", content: input.userPrompt }
-            ]
+            ],
+            tools: [
+              {
+                type: "function",
+                function: {
+                  name: SUBMIT_RESULT_FUNCTION_NAME,
+                  description: "Submit the structured result of this review.",
+                  parameters: input.jsonSchema
+                }
+              }
+            ],
+            tool_choice: {
+              type: "function",
+              function: { name: SUBMIT_RESULT_FUNCTION_NAME }
+            }
           })
         });
       } catch (err) {
@@ -36889,25 +36896,31 @@ ${JSON.stringify(input.jsonSchema)}`
         );
       }
       const body = await response.json();
-      const content = body.choices?.[0]?.message?.content;
-      if (typeof content !== "string") {
+      const toolCall = body.choices?.[0]?.message?.tool_calls?.find(
+        (call) => call.function?.name === SUBMIT_RESULT_FUNCTION_NAME
+      );
+      const args = toolCall?.function?.arguments;
+      if (typeof args !== "string") {
         throw new DeepSeekResponseError(
-          "deepseek-client: response missing choices[0].message.content"
+          `deepseek-client: response missing choices[0].message.tool_calls[].function(name=${SUBMIT_RESULT_FUNCTION_NAME}).arguments`
         );
       }
       try {
-        return JSON.parse(content);
+        return JSON.parse(args);
       } catch {
-        throw new DeepSeekResponseError("deepseek-client: response content is not valid JSON");
+        throw new DeepSeekResponseError(
+          "deepseek-client: tool call arguments are not valid JSON"
+        );
       }
     }
   }
   return { sendStructuredRequest };
 }
-var DeepSeekTransientError, DeepSeekResponseError;
+var SUBMIT_RESULT_FUNCTION_NAME, DeepSeekTransientError, DeepSeekResponseError;
 var init_deepseek_client = __esm({
   "src/lib/deepseek-client.ts"() {
     "use strict";
+    SUBMIT_RESULT_FUNCTION_NAME = "submit_result";
     DeepSeekTransientError = class extends Error {
     };
     DeepSeekResponseError = class extends Error {
@@ -36994,6 +37007,34 @@ var init_skill_loader = __esm({
   }
 });
 
+// src/lib/schema-dereferencer.ts
+function dereferenceSchema(schema2, refs) {
+  if (Array.isArray(schema2)) {
+    return schema2.map(
+      (item) => typeof item === "object" && item !== null ? dereferenceSchema(item, refs) : item
+    );
+  }
+  const entries = Object.entries(schema2);
+  const refEntry = entries.find(([key]) => key === "$ref");
+  if (refEntry && typeof refEntry[1] === "string") {
+    const target = refs[refEntry[1]];
+    if (!target) {
+      throw new Error(`schema-dereferencer: no schema registered for $ref "${refEntry[1]}"`);
+    }
+    return dereferenceSchema(target, refs);
+  }
+  const result = {};
+  for (const [key, value] of entries) {
+    result[key] = typeof value === "object" && value !== null ? dereferenceSchema(value, refs) : value;
+  }
+  return result;
+}
+var init_schema_dereferencer = __esm({
+  "src/lib/schema-dereferencer.ts"() {
+    "use strict";
+  }
+});
+
 // src/prompts/data-boundary.ts
 function neutralizeForgedMarkers(content) {
   return content.replace(FORGED_MARKER_RE, "<<<[neutralized $1 marker] PR_CONTENT:$2>>>");
@@ -37031,7 +37072,7 @@ async function runExpert(input) {
     model: input.model,
     systemPrompt,
     userPrompt,
-    jsonSchema: expert_output_schema_default
+    jsonSchema: expertOutputSchemaForModel
   });
   const result = validate(
     "https://pr-review-swarm/schemas/expert-output.schema.json",
@@ -37045,12 +37086,18 @@ async function runExpert(input) {
   const hardLimitHit = result.data.coverage_complete !== true || result.data.candidate_findings.length >= input.maxCandidateFindingsPerAgentPerShard;
   return { output: result.data, hardLimitHit };
 }
+var expertOutputSchemaForModel;
 var init_expert_runner = __esm({
   "src/lib/expert-runner.ts"() {
     "use strict";
     init_expert_output_schema();
+    init_candidate_finding_schema();
     init_schema_validator();
+    init_schema_dereferencer();
     init_data_boundary();
+    expertOutputSchemaForModel = dereferenceSchema(expert_output_schema_default, {
+      [candidate_finding_schema_default.$id]: candidate_finding_schema_default
+    });
   }
 });
 

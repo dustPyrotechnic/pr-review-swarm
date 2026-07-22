@@ -14,7 +14,17 @@ function jsonResponse(status: number, body: unknown) {
 }
 
 function successBody(content: unknown) {
-  return { choices: [{ message: { content: JSON.stringify(content) } }] };
+  return {
+    choices: [
+      {
+        message: {
+          tool_calls: [
+            { function: { name: 'submit_result', arguments: JSON.stringify(content) } },
+          ],
+        },
+      },
+    ],
+  };
 }
 
 const baseInput = {
@@ -88,10 +98,26 @@ describe('createDeepSeekClient / sendStructuredRequest', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it('does not retry when the response content is not valid JSON', async () => {
+  it('does not retry when the tool call arguments are not valid JSON', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
-      jsonResponse(200, { choices: [{ message: { content: 'not json' } }] }),
+      jsonResponse(200, {
+        choices: [
+          { message: { tool_calls: [{ function: { name: 'submit_result', arguments: 'not json' } }] } },
+        ],
+      }),
     );
+    const client = createDeepSeekClient({ apiKey: 'key', fetchImpl, sleep: async () => {} });
+
+    await expect(client.sendStructuredRequest(baseInput)).rejects.toBeInstanceOf(
+      DeepSeekResponseError,
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry when the response has no matching tool call', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(200, { choices: [{ message: {} }] }));
     const client = createDeepSeekClient({ apiKey: 'key', fetchImpl, sleep: async () => {} });
 
     await expect(client.sendStructuredRequest(baseInput)).rejects.toBeInstanceOf(

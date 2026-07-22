@@ -1,3 +1,10 @@
+// DeepSeek's json_object response_format only guarantees syntactically valid
+// JSON, not compliance with a caller-supplied schema — embedding the schema
+// as prompt text was observed to produce responses with made-up field names.
+// Forcing a tool call instead constrains the model to the declared
+// `parameters` schema.
+const SUBMIT_RESULT_FUNCTION_NAME = 'submit_result';
+
 export class DeepSeekTransientError extends Error {}
 export class DeepSeekResponseError extends Error {}
 
@@ -53,14 +60,24 @@ export function createDeepSeekClient(options: DeepSeekClientOptions): DeepSeekCl
           },
           body: JSON.stringify({
             model: input.model,
-            response_format: { type: 'json_object' },
             messages: [
-              {
-                role: 'system',
-                content: `${input.systemPrompt}\n\nRespond with a single JSON object matching this JSON Schema:\n${JSON.stringify(input.jsonSchema)}`,
-              },
+              { role: 'system', content: input.systemPrompt },
               { role: 'user', content: input.userPrompt },
             ],
+            tools: [
+              {
+                type: 'function',
+                function: {
+                  name: SUBMIT_RESULT_FUNCTION_NAME,
+                  description: 'Submit the structured result of this review.',
+                  parameters: input.jsonSchema,
+                },
+              },
+            ],
+            tool_choice: {
+              type: 'function',
+              function: { name: SUBMIT_RESULT_FUNCTION_NAME },
+            },
           }),
         });
       } catch (err) {
@@ -94,19 +111,26 @@ export function createDeepSeekClient(options: DeepSeekClientOptions): DeepSeekCl
       }
 
       const body = (await response.json()) as {
-        choices?: Array<{ message?: { content?: string } }>;
+        choices?: Array<{
+          message?: { tool_calls?: Array<{ function?: { name?: string; arguments?: string } }> };
+        }>;
       };
-      const content = body.choices?.[0]?.message?.content;
-      if (typeof content !== 'string') {
+      const toolCall = body.choices?.[0]?.message?.tool_calls?.find(
+        (call) => call.function?.name === SUBMIT_RESULT_FUNCTION_NAME,
+      );
+      const args = toolCall?.function?.arguments;
+      if (typeof args !== 'string') {
         throw new DeepSeekResponseError(
-          'deepseek-client: response missing choices[0].message.content',
+          `deepseek-client: response missing choices[0].message.tool_calls[].function(name=${SUBMIT_RESULT_FUNCTION_NAME}).arguments`,
         );
       }
 
       try {
-        return JSON.parse(content);
+        return JSON.parse(args);
       } catch {
-        throw new DeepSeekResponseError('deepseek-client: response content is not valid JSON');
+        throw new DeepSeekResponseError(
+          'deepseek-client: tool call arguments are not valid JSON',
+        );
       }
     }
   }

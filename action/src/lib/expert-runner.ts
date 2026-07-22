@@ -1,7 +1,13 @@
 import expertOutputSchema from '../../../schemas/expert-output.schema.json' with { type: 'json' };
+import candidateFindingSchema from '../../../schemas/candidate-finding.schema.json' with { type: 'json' };
 import { validate } from './schema-validator.js';
+import { dereferenceSchema } from './schema-dereferencer.js';
 import { wrapUntrustedContent } from '../prompts/data-boundary.js';
 import type { StructuredRequestInput } from './deepseek-client.js';
+
+const expertOutputSchemaForModel = dereferenceSchema(expertOutputSchema, {
+  [candidateFindingSchema.$id]: candidateFindingSchema,
+});
 
 export interface CandidateFinding {
   id: string;
@@ -67,7 +73,7 @@ export async function runExpert(input: RunExpertInput): Promise<RunExpertResult>
     model: input.model,
     systemPrompt,
     userPrompt,
-    jsonSchema: expertOutputSchema,
+    jsonSchema: expertOutputSchemaForModel,
   });
 
   const result = validate<ExpertOutput>(

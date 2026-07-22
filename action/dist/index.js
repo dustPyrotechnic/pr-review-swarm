@@ -37616,6 +37616,42 @@ var init_inline_comment_locator = __esm({
   }
 });
 
+// src/lib/retry.ts
+function defaultIsRetryable(err) {
+  const status = err?.status;
+  if (status === void 0)
+    return true;
+  return status === 429 || typeof status === "number" && status >= 500 && status < 600;
+}
+function backoffDelay2(attempt, baseDelayMs) {
+  const exponential = baseDelayMs * 2 ** (attempt - 1);
+  const jitter = Math.random() * baseDelayMs;
+  return exponential + jitter;
+}
+async function withRetry(fn, options) {
+  const baseDelayMs = options.baseDelayMs ?? 500;
+  const isRetryable = options.isRetryable ?? defaultIsRetryable;
+  const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  let attempt = 0;
+  for (; ; ) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt < options.maxRetries && isRetryable(err)) {
+        attempt += 1;
+        await sleep(backoffDelay2(attempt, baseDelayMs));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+var init_retry = __esm({
+  "src/lib/retry.ts"() {
+    "use strict";
+  }
+});
+
 // src/lib/summary-comment.ts
 function findStableMarkerId(ctx) {
   return `<!-- pr-review-swarm:marker=summary;repo=${ctx.owner}/${ctx.repo};pr=${ctx.prNumber} -->`;
@@ -37892,15 +37928,18 @@ async function executePublish(input) {
     }
     const unlocatable = batch.findings.filter((f) => !isFindingLocatable(f, currentFileDiffs));
     const locatable = batch.findings.filter((f) => isFindingLocatable(f, currentFileDiffs));
-    await input.octokit.rest.pulls.createReview({
-      owner: input.owner,
-      repo: input.repo,
-      pull_number: input.prNumber,
-      commit_id: input.currentIdentityTuple.headSha,
-      event: "COMMENT",
-      body: buildBatchReviewBody(batch, reviewSetId, unlocatable),
-      comments: buildInlineComments(locatable)
-    });
+    await withRetry(
+      () => input.octokit.rest.pulls.createReview({
+        owner: input.owner,
+        repo: input.repo,
+        pull_number: input.prNumber,
+        commit_id: input.currentIdentityTuple.headSha,
+        event: "COMMENT",
+        body: buildBatchReviewBody(batch, reviewSetId, unlocatable),
+        comments: buildInlineComments(locatable)
+      }),
+      { maxRetries: input.maxPublishRetries ?? 5, sleep: input.retrySleep }
+    );
   }
   const summaryCtx = {
     owner: input.owner,
@@ -37980,7 +38019,8 @@ async function run5() {
     reviewBatchLimits: {
       maxFindingsPerReviewBatch: central_limits_default.maxFindingsPerReviewBatch,
       maxReviewBodyChars: central_limits_default.maxReviewBodyChars
-    }
+    },
+    maxPublishRetries: central_limits_default.maxPublishRetries
   });
   await core6.summary.addRaw(result.markdownSummary).write();
   core6.setOutput("verdict", JSON.stringify(result.verdictSummary));
@@ -38001,6 +38041,7 @@ var init_publish = __esm({
     init_hidden_marker();
     init_diff_parser();
     init_inline_comment_locator();
+    init_retry();
     init_summary_comment();
   }
 });

@@ -16,6 +16,7 @@ import { planReviewBatches, type ReviewBatch, type ReviewBatchLimits } from '../
 import { decodeBatchMarker, encodeBatchMarker } from '../lib/hidden-marker.js';
 import { parsePatch, type ParsedFileDiff } from '../lib/diff-parser.js';
 import { isFindingLocatable } from '../lib/inline-comment-locator.js';
+import { withRetry } from '../lib/retry.js';
 import {
   buildSummaryCommentBody,
   upsertSummaryComment,
@@ -240,6 +241,12 @@ export interface ExecutePublishInput {
   model: string;
   schemaVersion: string;
   reviewBatchLimits: ReviewBatchLimits;
+  // Per-call exponential-backoff retry count for transient GitHub API errors
+  // (429/5xx/network) while publishing a single batch. This is distinct from
+  // the cross-run digest reconciliation above it in this file — see P2-G in
+  // the Phase 2 plan doc for why the two are separate concerns.
+  maxPublishRetries?: number;
+  retrySleep?: (ms: number) => Promise<void>;
 }
 
 export async function executePublish(input: ExecutePublishInput): Promise<PublishCoreResult> {
@@ -319,15 +326,19 @@ export async function executePublish(input: ExecutePublishInput): Promise<Publis
     const unlocatable = batch.findings.filter((f) => !isFindingLocatable(f, currentFileDiffs));
     const locatable = batch.findings.filter((f) => isFindingLocatable(f, currentFileDiffs));
 
-    await input.octokit.rest.pulls.createReview({
-      owner: input.owner,
-      repo: input.repo,
-      pull_number: input.prNumber,
-      commit_id: input.currentIdentityTuple.headSha,
-      event: 'COMMENT',
-      body: buildBatchReviewBody(batch, reviewSetId, unlocatable),
-      comments: buildInlineComments(locatable),
-    });
+    await withRetry(
+      () =>
+        input.octokit.rest.pulls.createReview({
+          owner: input.owner,
+          repo: input.repo,
+          pull_number: input.prNumber,
+          commit_id: input.currentIdentityTuple.headSha,
+          event: 'COMMENT',
+          body: buildBatchReviewBody(batch, reviewSetId, unlocatable),
+          comments: buildInlineComments(locatable),
+        }),
+      { maxRetries: input.maxPublishRetries ?? 5, sleep: input.retrySleep },
+    );
   }
 
   const summaryCtx: SummaryCommentContext = {
@@ -440,6 +451,7 @@ export async function run(): Promise<void> {
       maxFindingsPerReviewBatch: centralLimits.maxFindingsPerReviewBatch,
       maxReviewBodyChars: centralLimits.maxReviewBodyChars,
     },
+    maxPublishRetries: centralLimits.maxPublishRetries,
   });
 
   await core.summary.addRaw(result.markdownSummary).write();

@@ -405,4 +405,89 @@ describe('executePublish', () => {
     expect(createReviewCall.comments[0].line).toBe(1);
     expect(createReviewCall.body).toContain('unlocatable title');
   });
+
+  it('retries a transient createReview failure and still succeeds', async () => {
+    const octokit = makeMockOctokit();
+    const transientError = Object.assign(new Error('rate limited'), { status: 429 });
+    octokit.rest.pulls.createReview = vi
+      .fn()
+      .mockRejectedValueOnce(transientError)
+      .mockResolvedValueOnce({ data: { id: 1 } });
+    const retrySleep = vi.fn().mockResolvedValue(undefined);
+
+    const result = await executePublish({
+      octokit: octokit as never,
+      owner: 'octo',
+      repo: 'repo',
+      prNumber: 42,
+      currentIdentityTuple: identityTuple,
+      expectedIdentityTuple: identityTuple,
+      findings: [makeFinding('cf-1')],
+      coverageManifest: makeCoverageManifest(),
+      anyRequiredStageFailed: false,
+      reviewBatchLimits,
+      maxPublishRetries: 3,
+      retrySleep,
+      ...engineCtx,
+    });
+
+    expect(octokit.rest.pulls.createReview).toHaveBeenCalledTimes(2);
+    expect(retrySleep).toHaveBeenCalledTimes(1);
+    expect(result.verdictSummary.verdict).toBe('changes_requested');
+  });
+
+  it('gives up and propagates the error after exhausting maxPublishRetries', async () => {
+    const octokit = makeMockOctokit();
+    const persistentError = Object.assign(new Error('still failing'), { status: 503 });
+    octokit.rest.pulls.createReview = vi.fn().mockRejectedValue(persistentError);
+    const retrySleep = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      executePublish({
+        octokit: octokit as never,
+        owner: 'octo',
+        repo: 'repo',
+        prNumber: 42,
+        currentIdentityTuple: identityTuple,
+        expectedIdentityTuple: identityTuple,
+        findings: [makeFinding('cf-1')],
+        coverageManifest: makeCoverageManifest(),
+        anyRequiredStageFailed: false,
+        reviewBatchLimits,
+        maxPublishRetries: 2,
+        retrySleep,
+        ...engineCtx,
+      }),
+    ).rejects.toBe(persistentError);
+
+    expect(octokit.rest.pulls.createReview).toHaveBeenCalledTimes(3); // initial + 2 retries
+  });
+
+  it('does not retry a non-retryable error (e.g. 422 validation failure)', async () => {
+    const octokit = makeMockOctokit();
+    const validationError = Object.assign(new Error('unprocessable'), { status: 422 });
+    octokit.rest.pulls.createReview = vi.fn().mockRejectedValue(validationError);
+    const retrySleep = vi.fn().mockResolvedValue(undefined);
+
+    await expect(
+      executePublish({
+        octokit: octokit as never,
+        owner: 'octo',
+        repo: 'repo',
+        prNumber: 42,
+        currentIdentityTuple: identityTuple,
+        expectedIdentityTuple: identityTuple,
+        findings: [makeFinding('cf-1')],
+        coverageManifest: makeCoverageManifest(),
+        anyRequiredStageFailed: false,
+        reviewBatchLimits,
+        maxPublishRetries: 3,
+        retrySleep,
+        ...engineCtx,
+      }),
+    ).rejects.toBe(validationError);
+
+    expect(octokit.rest.pulls.createReview).toHaveBeenCalledTimes(1);
+    expect(retrySleep).not.toHaveBeenCalled();
+  });
 });

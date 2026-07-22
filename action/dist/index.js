@@ -36802,7 +36802,7 @@ var allowed_models_default;
 var init_allowed_models = __esm({
   "config/allowed-models.json"() {
     allowed_models_default = {
-      allowedModels: ["__PLACEHOLDER_DO_NOT_USE_IN_PRODUCTION__"]
+      allowedModels: ["deepseek-chat"]
     };
   }
 });

@@ -164,14 +164,23 @@ const engineCtx = {
 
 const reviewBatchLimits = { maxFindingsPerReviewBatch: 20, maxReviewBodyChars: 60000 };
 
+const DEFAULT_PATCH = ['@@ -1,2 +1,3 @@', ' context line', '+added line', ' context line 2'].join('\n');
+
 function makeMockOctokit(overrides: {
   listReviews?: Array<{ id: number; body: string | null }>;
   listReviewComments?: Array<{ id: number; pull_request_review_id: number }>;
+  files?: Array<{ filename: string; patch?: string }>;
 } = {}) {
+  const files = overrides.files ?? [{ filename: 'src/foo.ts', patch: DEFAULT_PATCH }];
   return {
+    paginate: vi.fn(async (fn: (params: unknown) => Promise<{ data: unknown[] }>, params: unknown) => {
+      const { data } = await fn(params);
+      return data;
+    }),
     rest: {
       pulls: {
         listReviews: vi.fn().mockResolvedValue({ data: overrides.listReviews ?? [] }),
+        listFiles: vi.fn().mockResolvedValue({ data: files }),
         createReview: vi.fn().mockResolvedValue({ data: { id: 1 } }),
         updateReview: vi.fn().mockResolvedValue({ data: {} }),
         listReviewComments: vi.fn().mockResolvedValue({ data: overrides.listReviewComments ?? [] }),
@@ -367,5 +376,33 @@ describe('executePublish', () => {
     expect(octokit.rest.pulls.updateReviewComment).toHaveBeenCalledWith(
       expect.objectContaining({ owner: 'octo', repo: 'repo', comment_id: 888 }),
     );
+  });
+
+  it('re-fetches the current diff and downgrades an unlocatable finding to the Review body instead of dropping it', async () => {
+    const octokit = makeMockOctokit(); // default diff only covers src/foo.ts lines 1-3
+    const locatable = makeFinding('cf-locatable'); // path src/foo.ts, line 1, RIGHT — in diff
+    const unlocatable = { ...makeFinding('cf-unlocatable'), line: 999, title: 'unlocatable title' };
+
+    await executePublish({
+      octokit: octokit as never,
+      owner: 'octo',
+      repo: 'repo',
+      prNumber: 42,
+      currentIdentityTuple: identityTuple,
+      expectedIdentityTuple: identityTuple,
+      findings: [locatable, unlocatable],
+      coverageManifest: makeCoverageManifest(),
+      anyRequiredStageFailed: false,
+      reviewBatchLimits,
+      ...engineCtx,
+    });
+
+    expect(octokit.rest.pulls.listFiles).toHaveBeenCalledWith(
+      expect.objectContaining({ owner: 'octo', repo: 'repo', pull_number: 42 }),
+    );
+    const createReviewCall = octokit.rest.pulls.createReview.mock.calls[0][0];
+    expect(createReviewCall.comments).toHaveLength(1);
+    expect(createReviewCall.comments[0].line).toBe(1);
+    expect(createReviewCall.body).toContain('unlocatable title');
   });
 });

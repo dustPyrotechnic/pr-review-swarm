@@ -14,6 +14,8 @@ import { computeVerdict, type Verdict } from '../lib/verdict.js';
 import { computeReviewSetId } from '../lib/review-set-id.js';
 import { planReviewBatches, type ReviewBatch, type ReviewBatchLimits } from '../lib/publish-manifest.js';
 import { decodeBatchMarker, encodeBatchMarker } from '../lib/hidden-marker.js';
+import { parsePatch, type ParsedFileDiff } from '../lib/diff-parser.js';
+import { isFindingLocatable } from '../lib/inline-comment-locator.js';
 import {
   buildSummaryCommentBody,
   upsertSummaryComment,
@@ -104,13 +106,36 @@ export function buildPublishResult(input: PublishCoreInput): PublishCoreResult {
   };
 }
 
-function buildBatchReviewBody(batch: ReviewBatch, reviewSetId: string): string {
+function buildBatchReviewBody(
+  batch: ReviewBatch,
+  reviewSetId: string,
+  unlocatableFindings: Finding[],
+): string {
+  const locatableCount = batch.findings.length - unlocatableFindings.length;
   const lines = [`## PR Review Swarm — batch ${batch.batchIndex + 1}/${batch.batchCount}`, ''];
 
   if (batch.findings.length === 0) {
     lines.push('No findings in this run.');
-  } else {
-    lines.push(`${batch.findings.length} finding(s) in this batch (see inline comments below).`);
+  } else if (locatableCount > 0) {
+    lines.push(`${locatableCount} finding(s) in this batch (see inline comments below).`);
+  }
+
+  if (unlocatableFindings.length > 0) {
+    // D-L215: a finding whose path/line/side no longer matches the diff we
+    // just re-fetched (rename, deletion, hunk drift since analyze ran)
+    // cannot carry an inline comment — GitHub would reject it — so it's
+    // downgraded here instead of being silently dropped.
+    lines.push('', '### 未能定位到具体行的问题', '');
+    for (const finding of unlocatableFindings) {
+      lines.push(
+        `**\`${finding.path}:${finding.line}\` [${finding.severity}] ${finding.title}**`,
+        '',
+        finding.evidence,
+        '',
+        finding.suggestion,
+        '',
+      );
+    }
   }
 
   lines.push('', encodeBatchMarker({
@@ -123,7 +148,7 @@ function buildBatchReviewBody(batch: ReviewBatch, reviewSetId: string): string {
   return lines.join('\n');
 }
 
-function buildInlineComments(batch: ReviewBatch): Array<{
+function buildInlineComments(findings: Finding[]): Array<{
   path: string;
   line: number;
   side: 'LEFT' | 'RIGHT';
@@ -131,12 +156,7 @@ function buildInlineComments(batch: ReviewBatch): Array<{
   start_side?: 'LEFT' | 'RIGHT';
   body: string;
 }> {
-  // Phase 2 simplification: every finding that reaches publish has already
-  // passed deterministic-evidence-validator + verifier confirmation against
-  // the locked head_sha, so we trust its path/line/side directly. Downgrading
-  // unlocatable findings to the Review body (D-L215) is deferred — see the
-  // Phase 2 plan doc's progress table.
-  return batch.findings.map((finding) => ({
+  return findings.map((finding) => ({
     path: finding.path,
     line: finding.line,
     side: finding.side,
@@ -144,6 +164,20 @@ function buildInlineComments(batch: ReviewBatch): Array<{
     ...(finding.start_side !== undefined ? { start_side: finding.start_side } : {}),
     body: `**[${finding.severity}] ${finding.title}**\n\n${finding.evidence}\n\n${finding.suggestion}`,
   }));
+}
+
+async function fetchCurrentFileDiffs(
+  octokit: Octokit,
+  params: { owner: string; repo: string; prNumber: number },
+): Promise<ParsedFileDiff[]> {
+  const files = await octokit.paginate(octokit.rest.pulls.listFiles, {
+    owner: params.owner,
+    repo: params.repo,
+    pull_number: params.prNumber,
+    per_page: 100,
+  });
+
+  return files.map((file) => parsePatch(file.filename, file.patch ?? ''));
 }
 
 async function supersedeOldReviewSets(
@@ -252,6 +286,12 @@ export async function executePublish(input: ExecutePublishInput): Promise<Publis
     reviews: existingReviews,
   });
 
+  const currentFileDiffs = await fetchCurrentFileDiffs(input.octokit, {
+    owner: input.owner,
+    repo: input.repo,
+    prNumber: input.prNumber,
+  });
+
   const batches = planReviewBatches(input.findings, input.reviewBatchLimits);
   const alreadyPublished = existingReviews
     .map((review) => decodeBatchMarker(review.body))
@@ -276,14 +316,17 @@ export async function executePublish(input: ExecutePublishInput): Promise<Publis
       break;
     }
 
+    const unlocatable = batch.findings.filter((f) => !isFindingLocatable(f, currentFileDiffs));
+    const locatable = batch.findings.filter((f) => isFindingLocatable(f, currentFileDiffs));
+
     await input.octokit.rest.pulls.createReview({
       owner: input.owner,
       repo: input.repo,
       pull_number: input.prNumber,
       commit_id: input.currentIdentityTuple.headSha,
       event: 'COMMENT',
-      body: buildBatchReviewBody(batch, reviewSetId),
-      comments: buildInlineComments(batch),
+      body: buildBatchReviewBody(batch, reviewSetId, unlocatable),
+      comments: buildInlineComments(locatable),
     });
   }
 

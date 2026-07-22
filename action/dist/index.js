@@ -37583,6 +37583,39 @@ var init_hidden_marker = __esm({
   }
 });
 
+// src/lib/inline-comment-locator.ts
+function isPointLocatable(fileDiff, line, side) {
+  if (!fileDiff)
+    return false;
+  const key = side === "RIGHT" ? "newLine" : "oldLine";
+  return fileDiff.hunks.some(
+    (hunk) => hunk.lines.some((diffLine) => {
+      if (side === "RIGHT" && diffLine.type === "del")
+        return false;
+      if (side === "LEFT" && diffLine.type === "add")
+        return false;
+      return diffLine[key] === line;
+    })
+  );
+}
+function isFindingLocatable(finding, fileDiffs) {
+  const fileDiff = fileDiffs.find((f) => f.path === finding.path);
+  if (!isPointLocatable(fileDiff, finding.line, finding.side))
+    return false;
+  if (finding.start_line !== void 0 || finding.start_side !== void 0) {
+    if (finding.start_line === void 0 || finding.start_side === void 0)
+      return false;
+    if (!isPointLocatable(fileDiff, finding.start_line, finding.start_side))
+      return false;
+  }
+  return true;
+}
+var init_inline_comment_locator = __esm({
+  "src/lib/inline-comment-locator.ts"() {
+    "use strict";
+  }
+});
+
 // src/lib/summary-comment.ts
 function findStableMarkerId(ctx) {
   return `<!-- pr-review-swarm:marker=summary;repo=${ctx.owner}/${ctx.repo};pr=${ctx.prNumber} -->`;
@@ -37710,12 +37743,26 @@ function buildPublishResult(input) {
     markdownSummary: buildMarkdownSummary(verdictSummary, input.findings)
   };
 }
-function buildBatchReviewBody(batch, reviewSetId) {
+function buildBatchReviewBody(batch, reviewSetId, unlocatableFindings) {
+  const locatableCount = batch.findings.length - unlocatableFindings.length;
   const lines = [`## PR Review Swarm \u2014 batch ${batch.batchIndex + 1}/${batch.batchCount}`, ""];
   if (batch.findings.length === 0) {
     lines.push("No findings in this run.");
-  } else {
-    lines.push(`${batch.findings.length} finding(s) in this batch (see inline comments below).`);
+  } else if (locatableCount > 0) {
+    lines.push(`${locatableCount} finding(s) in this batch (see inline comments below).`);
+  }
+  if (unlocatableFindings.length > 0) {
+    lines.push("", "### \u672A\u80FD\u5B9A\u4F4D\u5230\u5177\u4F53\u884C\u7684\u95EE\u9898", "");
+    for (const finding of unlocatableFindings) {
+      lines.push(
+        `**\`${finding.path}:${finding.line}\` [${finding.severity}] ${finding.title}**`,
+        "",
+        finding.evidence,
+        "",
+        finding.suggestion,
+        ""
+      );
+    }
   }
   lines.push("", encodeBatchMarker({
     reviewSetId,
@@ -37725,8 +37772,8 @@ function buildBatchReviewBody(batch, reviewSetId) {
   }));
   return lines.join("\n");
 }
-function buildInlineComments(batch) {
-  return batch.findings.map((finding) => ({
+function buildInlineComments(findings) {
+  return findings.map((finding) => ({
     path: finding.path,
     line: finding.line,
     side: finding.side,
@@ -37738,6 +37785,15 @@ ${finding.evidence}
 
 ${finding.suggestion}`
   }));
+}
+async function fetchCurrentFileDiffs(octokit, params) {
+  const files = await octokit.paginate(octokit.rest.pulls.listFiles, {
+    owner: params.owner,
+    repo: params.repo,
+    pull_number: params.prNumber,
+    per_page: 100
+  });
+  return files.map((file) => parsePatch(file.filename, file.patch ?? ""));
 }
 async function supersedeOldReviewSets(octokit, params) {
   const staleReviews = params.reviews.filter((review) => {
@@ -37814,6 +37870,11 @@ async function executePublish(input) {
     currentReviewSetId: reviewSetId,
     reviews: existingReviews
   });
+  const currentFileDiffs = await fetchCurrentFileDiffs(input.octokit, {
+    owner: input.owner,
+    repo: input.repo,
+    prNumber: input.prNumber
+  });
   const batches = planReviewBatches(input.findings, input.reviewBatchLimits);
   const alreadyPublished = existingReviews.map((review) => decodeBatchMarker(review.body)).filter((marker) => marker !== void 0).filter((marker) => marker.reviewSetId === reviewSetId);
   for (const batch of batches) {
@@ -37829,14 +37890,16 @@ async function executePublish(input) {
       ];
       break;
     }
+    const unlocatable = batch.findings.filter((f) => !isFindingLocatable(f, currentFileDiffs));
+    const locatable = batch.findings.filter((f) => isFindingLocatable(f, currentFileDiffs));
     await input.octokit.rest.pulls.createReview({
       owner: input.owner,
       repo: input.repo,
       pull_number: input.prNumber,
       commit_id: input.currentIdentityTuple.headSha,
       event: "COMMENT",
-      body: buildBatchReviewBody(batch, reviewSetId),
-      comments: buildInlineComments(batch)
+      body: buildBatchReviewBody(batch, reviewSetId, unlocatable),
+      comments: buildInlineComments(locatable)
     });
   }
   const summaryCtx = {
@@ -37936,6 +37999,8 @@ var init_publish = __esm({
     init_review_set_id();
     init_publish_manifest();
     init_hidden_marker();
+    init_diff_parser();
+    init_inline_comment_locator();
     init_summary_comment();
   }
 });

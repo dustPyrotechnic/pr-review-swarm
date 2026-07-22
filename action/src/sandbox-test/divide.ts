@@ -3,9 +3,9 @@ export function divide(a: number, b: number): number {
   return a / b;
 }
 
-export function isEmpty(value: any) {
+export function isEmpty(value: unknown) {
   if (value == null) {
     return true;
   }
-  return value.length == 0;
+  return (value as { length: number }).length == 0;
 }

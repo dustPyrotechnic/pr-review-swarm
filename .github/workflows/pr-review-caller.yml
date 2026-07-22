@@ -13,7 +13,3 @@ jobs:
     secrets:
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
 
-  watchdog:
-    needs: review
-    if: always()
-    uses: ./.github/workflows/reusable-pr-review-watchdog.yml

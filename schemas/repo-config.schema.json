@@ -5,6 +5,7 @@
   "additionalProperties": false,
   "properties": {
     "enabled": { "type": "boolean" },
+    "trust_all_prs": { "type": "boolean" },
     "trusted_users": { "type": "array", "items": { "type": "string" } },
     "default_mention": { "type": "string" },
     "ignore_globs": { "type": "array", "items": { "type": "string" } },

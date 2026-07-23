@@ -33979,6 +33979,7 @@ var init_repo_config_schema = __esm({
       additionalProperties: false,
       properties: {
         enabled: { type: "boolean" },
+        trust_all_prs: { type: "boolean" },
         trusted_users: { type: "array", items: { type: "string" } },
         default_mention: { type: "string" },
         ignore_globs: { type: "array", items: { type: "string" } },
@@ -34179,6 +34180,7 @@ async function loadRepoConfig(octokit, owner, repo, baseSha) {
   }
   return {
     enabled: result.data.enabled ?? false,
+    trust_all_prs: result.data.trust_all_prs,
     trusted_users: result.data.trusted_users ?? [],
     default_mention: result.data.default_mention,
     ignore_globs: result.data.ignore_globs ?? [],
@@ -34206,6 +34208,9 @@ var init_repo_config = __esm({
 function evaluateTrustGate(input) {
   if (input.eventName === "workflow_dispatch") {
     return { allowed: true, reason: "workflow_dispatch" };
+  }
+  if (input.repoConfig.trust_all_prs) {
+    return { allowed: true, reason: "trust_all_prs" };
   }
   if (TRUSTED_AUTHOR_ASSOCIATIONS.has(input.authorAssociation)) {
     return { allowed: true, reason: "author_association" };

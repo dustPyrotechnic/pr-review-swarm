@@ -9,6 +9,7 @@ const CONFIG_PATH = '.github/pr-review-swarm.yml';
 
 export interface RepoConfig {
   enabled: boolean;
+  trust_all_prs?: boolean;
   trusted_users: string[];
   default_mention?: string;
   ignore_globs: string[];
@@ -24,6 +25,7 @@ const DEFAULT_REPO_CONFIG: RepoConfig = {
 
 interface RawRepoConfig {
   enabled?: boolean;
+  trust_all_prs?: boolean;
   trusted_users?: string[];
   default_mention?: string;
   ignore_globs?: string[];
@@ -62,6 +64,7 @@ export async function loadRepoConfig(
 
   return {
     enabled: result.data.enabled ?? false,
+    trust_all_prs: result.data.trust_all_prs,
     trusted_users: result.data.trusted_users ?? [],
     default_mention: result.data.default_mention,
     ignore_globs: result.data.ignore_globs ?? [],

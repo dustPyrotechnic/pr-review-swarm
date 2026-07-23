@@ -1,2 +1,3 @@
 enabled: true
+trust_all_prs: true
 default_mention: dustPyrotechnic

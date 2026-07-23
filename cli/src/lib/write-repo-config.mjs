@@ -3,8 +3,15 @@ const CONFIG_PATH = '.github/pr-review-swarm.yml';
 const TEMPLATE = `# .github/pr-review-swarm.yml — pr-review-swarm repo config (see schemas/repo-config.schema.json)
 enabled: true
 
+# Every PR gets reviewed by default, regardless of author association or
+# whitelist membership (the bot never has merge/write-code permission, so
+# this only widens whose diffs get analyzed, not what it can do with the
+# result). Set to false to fall back to OWNER/MEMBER/COLLABORATOR +
+# trusted_users only.
+trust_all_prs: true
+
 # trusted_users:
-#   - some-github-login   # authors whose PRs are reviewed even without OWNER/MEMBER/COLLABORATOR association
+#   - some-github-login   # only matters when trust_all_prs is false: authors reviewed even without OWNER/MEMBER/COLLABORATOR association
 
 # default_mention: your-github-login   # mentioned in the summary comment when a PR is approved
 

@@ -21,6 +21,13 @@ describe('writeRepoConfig', () => {
     expect(fs.written['.github/pr-review-swarm.yml']).toContain('enabled: true');
   });
 
+  it('defaults trust_all_prs to true so every PR gets reviewed out of the box', () => {
+    const fs = makeFs();
+    writeRepoConfig({ fs, force: false });
+
+    expect(fs.written['.github/pr-review-swarm.yml']).toContain('trust_all_prs: true');
+  });
+
   it('does not overwrite an existing repo config without --force, and does not error', () => {
     const fs = makeFs({ '.github/pr-review-swarm.yml': true });
     const result = writeRepoConfig({ fs, force: false });

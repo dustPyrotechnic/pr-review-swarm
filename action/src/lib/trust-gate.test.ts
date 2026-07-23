@@ -70,4 +70,26 @@ describe('evaluateTrustGate', () => {
 
     expect(decision.allowed).toBe(false);
   });
+
+  it('allows anyone when repoConfig.trust_all_prs is true, even with untrusted association and no whitelist entry', () => {
+    const decision = evaluateTrustGate({
+      eventName: 'pull_request_target',
+      authorAssociation: 'NONE',
+      senderLogin: 'random-user',
+      repoConfig: { ...baseRepoConfig, trust_all_prs: true },
+    });
+
+    expect(decision).toEqual({ allowed: true, reason: 'trust_all_prs' });
+  });
+
+  it('still enforces the normal checks when trust_all_prs is explicitly false', () => {
+    const decision = evaluateTrustGate({
+      eventName: 'pull_request_target',
+      authorAssociation: 'NONE',
+      senderLogin: 'random-user',
+      repoConfig: { ...baseRepoConfig, trust_all_prs: false },
+    });
+
+    expect(decision.allowed).toBe(false);
+  });
 });

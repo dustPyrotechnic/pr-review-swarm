@@ -60,6 +60,16 @@ describe('loadRepoConfig', () => {
     });
   });
 
+  it('parses trust_all_prs: true from the config file', async () => {
+    const octokit = makeMockOctokit(() =>
+      Promise.resolve(toContentResponse('enabled: true\ntrust_all_prs: true\n')),
+    );
+
+    const config = await loadRepoConfig(octokit as never, 'octo', 'repo', 'basesha123');
+
+    expect(config.trust_all_prs).toBe(true);
+  });
+
   it('requests the file content pinned at the given baseSha', async () => {
     const octokit = makeMockOctokit(() => Promise.resolve(toContentResponse('enabled: true\n')));
 

@@ -45,6 +45,14 @@
 - **PR #6**（`scripts/sandbox-test-lookup-user.mjs`，故意写入 SQL 注入 bug）：真实跑出 `verdict=incomplete`（因 `any_required_stage_failed`，见下方已知问题）但 `final_findings_count=2`（含一条 critical SQL injection），`final_review_event=REQUEST_CHANGES`，Review 状态确认为 `CHANGES_REQUESTED`，Review body 与摘要评论顶部均正确出现"⚠️ 本次审核未完整覆盖"横幅。**验证了 REQUEST_CHANGES 分支、incomplete 横幅、批次 marker、inline comment 全链路在真实 GitHub 环境下工作正常。**
 - **PR #5**（纯文档新增，无 bug）：两次运行都命中 `any_required_stage_failed`（`final_findings_count=0` → `final_review_event=none`），只发了摘要评论、没有提交 Review，符合 Task 3.1 "incomplete+零 finding 只更新摘要" 的设计。**没能在沙盒里实测到 pass→APPROVE+mention 分支**，因为触发了下方"已知问题"。该分支已由 `publish.test.ts`/`summary-comment.test.ts` 的单测充分覆盖（含 mention 断言）。
 
-### 已知问题（超出 Phase 3 范围，记录供后续排查）
+### 已知问题：已排查并修复（2026-07-23）
 
-`analyze` 阶段对**纯文档 diff**（无代码内容）连续两次触发 `any_required_stage_failed`，而对含真实代码的 diff（PR #6）正常工作。`analyze.ts` 的 catch 块（`src/entrypoints/analyze.ts:124`）吞掉了具体错误信息，只设置 `anyRequiredStageFailed = true`，日志里看不到根因。怀疑是某个 expert agent 对"无代码内容可评审"的 shard 返回了不满足 expert-output schema 的响应。**这是 Phase 1/2 就存在的 analyze 流水线问题，与本轮 Phase 3 改动（REQUEST_CHANGES/APPROVE 事件、watchdog 回填）无关**，建议单独排查（可以先给 catch 块加日志暴露原始错误）。
+`analyze` 阶段对**纯文档 diff**（无代码内容）曾偶发触发 `any_required_stage_failed`。按 systematic-debugging 流程排查：
+
+1. **加诊断**：`analyze.ts` 的 catch 块此前吞掉了具体错误信息（只设置 `anyRequiredStageFailed = true`），先给 `AnalyzeCoreResult` 加了 `stageFailureReason` 字段并通过 `core.warning` 输出（commit `84dbc01`），不改变行为，只为拿到真实错误文本。
+2. **在沙盒里复现**（`dustPyrotechnic/pr-review-swarm` #7，同一份纯文档 diff 反复重跑）：第一次跑通过（`verdict=pass`），第二次真实抓到了错误：`expert-output schema validation: /coverage_complete must be boolean`。
+3. **第一次修复尝试（加 1 次 schema-invalid 重试，commit `efa3653`）不成立**：加了重试后再次复现，仍然失败——说明不是单次随机噪声，重试不足以稳定修复。
+4. **加更强诊断**（commit `5907ab8`）后再次复现，拿到确凿证据：模型返回的顶层字段是 `{"shard_id":"diff","agent":"generic-security","coverage_complete":"true"}`——`coverage_complete` 被返回成字符串 `"true"` 而不是 JSON 布尔值。
+5. **真正的修复**（commit `0777a30`）：在 `expert-runner.ts` 校验前，把 `coverage_complete` 严格等于字符串 `"true"`/`"false"` 的情况归一化成真正的布尔值（只处理这两个精确字符串，其它非法值仍然按校验失败处理，不放宽真正的伪造/损坏数据）。用同一份纯文档 diff 连续验证 2 次，均 `verdict=pass`、无警告。
+
+**额外发现、记录但本次未处理**：证据里 `shard_id` 是 `"diff"`——这不是真实 shard id，说明 prompt 从未把真正的 `shard_id` 告诉过模型（`buildExpertSystemPrompt`/`wrapUntrustedContent` 都没有提及），模型只能瞎编一个看起来合理的值。因为 schema 只要求 `shard_id` 是字符串（不校验取值），这不会导致校验失败，所以不在这次"`/coverage_complete must be boolean`"故障的根因范围内，但值得后续单独处理：调用方（`analyze.ts`）本来就知道真实的 `shardId`/`agentName`，没有必要依赖模型回填这两个字段。

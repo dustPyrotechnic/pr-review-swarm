@@ -29,6 +29,10 @@ export interface AnalyzeLimits {
   maxSkillRequestsPerRun: number;
   maxVerifierCallsPerRun: number;
   maxFinalFindingsPerRun: number;
+  // Retries for a schema-invalid-but-otherwise-successful expert response
+  // (empirically a stochastic model-formatting glitch, not a deterministic
+  // prompt defect — see expert-runner.ts's ExpertOutputSchemaError).
+  maxExpertSchemaRetries: number;
 }
 
 export interface AnalyzeCoreInput {
@@ -126,6 +130,7 @@ export async function runAnalysis(input: AnalyzeCoreInput): Promise<AnalyzeCoreR
           model: input.model,
           client: input.client,
           maxCandidateFindingsPerAgentPerShard: input.limits.maxCandidateFindingsPerAgentPerShard,
+          maxSchemaRetries: input.limits.maxExpertSchemaRetries,
         });
       } catch (err) {
         // A DeepSeek outage, a model response that fails expert-output schema
@@ -187,6 +192,7 @@ export async function runAnalysis(input: AnalyzeCoreInput): Promise<AnalyzeCoreR
             model: input.model,
             client: input.client,
             maxCandidateFindingsPerAgentPerShard: input.limits.maxCandidateFindingsPerAgentPerShard,
+            maxSchemaRetries: input.limits.maxExpertSchemaRetries,
           });
         } catch (err) {
           anyRequiredStageFailed = true;
@@ -315,6 +321,7 @@ export async function run(): Promise<void> {
       maxSkillRequestsPerRun: centralLimits.maxSkillRequestsPerRun,
       maxVerifierCallsPerRun: centralLimits.maxVerifierCallsPerRun,
       maxFinalFindingsPerRun: centralLimits.maxFinalFindingsPerRun,
+      maxExpertSchemaRetries: centralLimits.maxExpertSchemaRetries,
     },
   });
 

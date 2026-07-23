@@ -90,4 +90,49 @@ describe('runExpert', () => {
 
     await expect(runExpert({ ...baseInput, client })).rejects.toThrow();
   });
+
+  // Real-world evidence (2026-07-23 sandbox reproduction): DeepSeek
+  // occasionally returns coverage_complete as a non-boolean (e.g. a
+  // stringified "true") on an otherwise-valid tool call — a stochastic
+  // formatting slip, not a deterministic prompt defect: an identical
+  // request succeeded on the very next attempt. One retry is cheap
+  // insurance against this class of one-off model glitch.
+  it('retries once and succeeds when the first response fails schema validation but the retry is valid', async () => {
+    const client = {
+      sendStructuredRequest: vi
+        .fn()
+        .mockResolvedValueOnce({ ...makeValidExpertOutput(1, true), coverage_complete: 'true' })
+        .mockResolvedValueOnce(makeValidExpertOutput(1, true)),
+    };
+    const retrySleep = vi.fn().mockResolvedValue(undefined);
+
+    const result = await runExpert({ ...baseInput, client, maxSchemaRetries: 1, retrySleep });
+
+    expect(client.sendStructuredRequest).toHaveBeenCalledTimes(2);
+    expect(result.output.candidate_findings).toHaveLength(1);
+  });
+
+  it('gives up and throws after exhausting maxSchemaRetries on persistent schema-invalid responses', async () => {
+    const client = {
+      sendStructuredRequest: vi.fn().mockResolvedValue({ ...makeValidExpertOutput(1, true), coverage_complete: 'true' }),
+    };
+    const retrySleep = vi.fn().mockResolvedValue(undefined);
+
+    await expect(runExpert({ ...baseInput, client, maxSchemaRetries: 2, retrySleep })).rejects.toThrow(
+      /schema validation/,
+    );
+    expect(client.sendStructuredRequest).toHaveBeenCalledTimes(3); // initial + 2 retries
+  });
+
+  it('does not retry a network/transport error — only schema-validation failures are retried here', async () => {
+    const client = {
+      sendStructuredRequest: vi.fn().mockRejectedValue(new Error('network boom')),
+    };
+    const retrySleep = vi.fn().mockResolvedValue(undefined);
+
+    await expect(runExpert({ ...baseInput, client, maxSchemaRetries: 2, retrySleep })).rejects.toThrow(
+      'network boom',
+    );
+    expect(client.sendStructuredRequest).toHaveBeenCalledTimes(1);
+  });
 });

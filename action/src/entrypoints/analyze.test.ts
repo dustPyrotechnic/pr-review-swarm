@@ -89,6 +89,7 @@ const baseLimits = {
   maxSkillRequestsPerRun: 3,
   maxVerifierCallsPerRun: 200,
   maxFinalFindingsPerRun: 200,
+  maxExpertSchemaRetries: 0,
 };
 
 describe('runAnalysis', () => {
@@ -323,6 +324,27 @@ describe('runAnalysis', () => {
     });
 
     expect(result.stageFailureReason).toContain('shard_id');
+  });
+
+  it('recovers without anyRequiredStageFailed when an expert response is schema-invalid once but the configured retry succeeds', async () => {
+    const client = {
+      sendStructuredRequest: vi
+        .fn()
+        .mockResolvedValueOnce({ shard_id: 'shard-1', agent: 'generic-correctness', coverage_complete: 'true', candidate_findings: [] })
+        .mockResolvedValue(emptyExpertOutput('shard-1', 'generic-correctness')),
+    };
+
+    const result = await runAnalysis({
+      prepareArtifact: makeArtifact(),
+      skillIndexMd: SKILL_INDEX_MD,
+      loadSkillFn: fakeLoadSkill,
+      model: 'deepseek-test-model',
+      client,
+      limits: { ...baseLimits, maxExpertSchemaRetries: 1 },
+    });
+
+    expect(result.anyRequiredStageFailed).toBe(false);
+    expect(result.stageFailureReason).toBeUndefined();
   });
 
   it('marks anyRequiredStageFailed instead of throwing when loading an equipped skill fails', async () => {

@@ -17,7 +17,7 @@ jobs:
     steps:
       # See reusable-pr-review.yml's NOTE — replace with the real org/repo and
       # the pinned commit SHA you trust before using this workflow.
-      - uses: dustPyrotechnic/pr-review-swarm/action@84dbc01a147ebd21d6649603dfa35227e51f68bf
+      - uses: dustPyrotechnic/pr-review-swarm/action@814661caa1d2a3dc2fbea860fe43b9a79661055a
         with:
           entrypoint: watchdog
           github_token: ${{ secrets.GITHUB_TOKEN }}

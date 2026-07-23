@@ -34509,7 +34509,8 @@ var init_central_limits = __esm({
       maxBytesPerShard: 2e5,
       maxShardsPerRun: 20,
       maxFindingsPerReviewBatch: 20,
-      maxReviewBodyChars: 6e4
+      maxReviewBodyChars: 6e4,
+      maxExpertSchemaRetries: 1
     };
   }
 });
@@ -37095,6 +37096,42 @@ var init_data_boundary = __esm({
   }
 });
 
+// src/lib/retry.ts
+function defaultIsRetryable(err) {
+  const status = err?.status;
+  if (status === void 0)
+    return true;
+  return status === 429 || typeof status === "number" && status >= 500 && status < 600;
+}
+function backoffDelay2(attempt, baseDelayMs) {
+  const exponential = baseDelayMs * 2 ** (attempt - 1);
+  const jitter = Math.random() * baseDelayMs;
+  return exponential + jitter;
+}
+async function withRetry(fn, options) {
+  const baseDelayMs = options.baseDelayMs ?? 500;
+  const isRetryable = options.isRetryable ?? defaultIsRetryable;
+  const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  let attempt = 0;
+  for (; ; ) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt < options.maxRetries && isRetryable(err)) {
+        attempt += 1;
+        await sleep(backoffDelay2(attempt, baseDelayMs));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+var init_retry = __esm({
+  "src/lib/retry.ts"() {
+    "use strict";
+  }
+});
+
 // src/lib/expert-runner.ts
 function buildExpertSystemPrompt(agentName, skillBodies) {
   return [
@@ -37103,9 +37140,7 @@ function buildExpertSystemPrompt(agentName, skillBodies) {
     ...skillBodies
   ].join("\n\n");
 }
-async function runExpert(input) {
-  const systemPrompt = buildExpertSystemPrompt(input.agentName, input.systemPromptSkills);
-  const userPrompt = wrapUntrustedContent("diff-and-context", input.shardContent);
+async function requestAndValidate(input, systemPrompt, userPrompt) {
   const raw = await input.client.sendStructuredRequest({
     model: input.model,
     systemPrompt,
@@ -37117,14 +37152,24 @@ async function runExpert(input) {
     raw
   );
   if (!result.valid) {
-    throw new Error(
+    throw new ExpertOutputSchemaError(
       `expert-runner: model response failed expert-output schema validation: ${result.errors.join("; ")}`
     );
   }
-  const hardLimitHit = result.data.coverage_complete !== true || result.data.candidate_findings.length >= input.maxCandidateFindingsPerAgentPerShard;
-  return { output: result.data, hardLimitHit };
+  return result.data;
 }
-var expertOutputSchemaForModel;
+async function runExpert(input) {
+  const systemPrompt = buildExpertSystemPrompt(input.agentName, input.systemPromptSkills);
+  const userPrompt = wrapUntrustedContent("diff-and-context", input.shardContent);
+  const data = await withRetry(() => requestAndValidate(input, systemPrompt, userPrompt), {
+    maxRetries: input.maxSchemaRetries ?? 0,
+    sleep: input.retrySleep,
+    isRetryable: (err) => err instanceof ExpertOutputSchemaError
+  });
+  const hardLimitHit = data.coverage_complete !== true || data.candidate_findings.length >= input.maxCandidateFindingsPerAgentPerShard;
+  return { output: data, hardLimitHit };
+}
+var ExpertOutputSchemaError, expertOutputSchemaForModel;
 var init_expert_runner = __esm({
   "src/lib/expert-runner.ts"() {
     "use strict";
@@ -37133,6 +37178,9 @@ var init_expert_runner = __esm({
     init_schema_validator();
     init_schema_dereferencer();
     init_data_boundary();
+    init_retry();
+    ExpertOutputSchemaError = class extends Error {
+    };
     expertOutputSchemaForModel = dereferenceSchema(expert_output_schema_default, {
       [candidate_finding_schema_default.$id]: candidate_finding_schema_default
     });
@@ -37376,7 +37424,8 @@ async function runAnalysis(input) {
             shardContent,
             model: input.model,
             client: input.client,
-            maxCandidateFindingsPerAgentPerShard: input.limits.maxCandidateFindingsPerAgentPerShard
+            maxCandidateFindingsPerAgentPerShard: input.limits.maxCandidateFindingsPerAgentPerShard,
+            maxSchemaRetries: input.limits.maxExpertSchemaRetries
           });
         } catch (err) {
           anyRequiredStageFailed = true;
@@ -37429,7 +37478,8 @@ async function runAnalysis(input) {
               shardContent,
               model: input.model,
               client: input.client,
-              maxCandidateFindingsPerAgentPerShard: input.limits.maxCandidateFindingsPerAgentPerShard
+              maxCandidateFindingsPerAgentPerShard: input.limits.maxCandidateFindingsPerAgentPerShard,
+              maxSchemaRetries: input.limits.maxExpertSchemaRetries
             });
           } catch (err) {
             anyRequiredStageFailed = true;
@@ -37535,7 +37585,8 @@ async function run4() {
       maxCandidateFindingsPerAgentPerShard: central_limits_default.maxCandidateFindingsPerAgentPerShard,
       maxSkillRequestsPerRun: central_limits_default.maxSkillRequestsPerRun,
       maxVerifierCallsPerRun: central_limits_default.maxVerifierCallsPerRun,
-      maxFinalFindingsPerRun: central_limits_default.maxFinalFindingsPerRun
+      maxFinalFindingsPerRun: central_limits_default.maxFinalFindingsPerRun,
+      maxExpertSchemaRetries: central_limits_default.maxExpertSchemaRetries
     }
   });
   if (result.stageFailureReason) {
@@ -37739,42 +37790,6 @@ function isFindingLocatable(finding, fileDiffs) {
 }
 var init_inline_comment_locator = __esm({
   "src/lib/inline-comment-locator.ts"() {
-    "use strict";
-  }
-});
-
-// src/lib/retry.ts
-function defaultIsRetryable(err) {
-  const status = err?.status;
-  if (status === void 0)
-    return true;
-  return status === 429 || typeof status === "number" && status >= 500 && status < 600;
-}
-function backoffDelay2(attempt, baseDelayMs) {
-  const exponential = baseDelayMs * 2 ** (attempt - 1);
-  const jitter = Math.random() * baseDelayMs;
-  return exponential + jitter;
-}
-async function withRetry(fn, options) {
-  const baseDelayMs = options.baseDelayMs ?? 500;
-  const isRetryable = options.isRetryable ?? defaultIsRetryable;
-  const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-  let attempt = 0;
-  for (; ; ) {
-    try {
-      return await fn();
-    } catch (err) {
-      if (attempt < options.maxRetries && isRetryable(err)) {
-        attempt += 1;
-        await sleep(backoffDelay2(attempt, baseDelayMs));
-        continue;
-      }
-      throw err;
-    }
-  }
-}
-var init_retry = __esm({
-  "src/lib/retry.ts"() {
     "use strict";
   }
 });

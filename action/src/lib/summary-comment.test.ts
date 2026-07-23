@@ -102,16 +102,16 @@ describe('buildSummaryCommentBody', () => {
     expect(body).toContain('⚠️ 本次审核未完整覆盖');
   });
 
-  it('mentions the configured default_mention when the final review event is APPROVE', () => {
+  it('mentions the configured default_mention when the verdict is pass (clean PR, still needs a human to confirm)', () => {
     const body = buildSummaryCommentBody(
       { ...ctx, defaultMention: 'dustPyrotechnic' },
-      { ...verdictSummary, verdict: 'pass', final_review_event: 'APPROVE', final_findings_count: 0 },
+      { ...verdictSummary, verdict: 'pass', final_review_event: 'COMMENT', final_findings_count: 0 },
       [],
     );
     expect(body).toContain('@dustPyrotechnic');
   });
 
-  it('does not mention anyone when the final review event is not APPROVE, even if default_mention is set', () => {
+  it('does not mention anyone when the verdict is not pass, even if default_mention is set', () => {
     const body = buildSummaryCommentBody(
       { ...ctx, defaultMention: 'dustPyrotechnic' },
       verdictSummary,

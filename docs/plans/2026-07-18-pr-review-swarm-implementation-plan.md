@@ -867,7 +867,9 @@ jobs:
 
 ## Phase 3：启用 REQUEST_CHANGES/APPROVE
 
-> **状态：已完成（2026-07-22）。** Task 3.1-3.4 全部落地，TDD 流程 + 沙盒仓库端到端验证（`dustPyrotechnic/pr-review-swarm` PR #5/#6）。详细清单见 `action/test/integration/CHECKLIST.md`。Task 3.4 审计过程中发现并修复一个 Phase 2 遗留缺口：`supersedeOldReviewSets` 此前从未真正调用 `dismissReview`，一律走编辑 body 路径；已按设计文档 L211 补齐"先 dismiss、403 时降级编辑"的分支。另发现一个与本阶段无关的既有问题：analyze 阶段对纯文档 diff 会偶发 `any_required_stage_failed`（详见 CHECKLIST.md"已知问题"），留待后续单独排查。
+> **状态：已完成（2026-07-22），并于 2026-07-23 修订。** Task 3.1-3.4 全部落地，TDD 流程 + 沙盒仓库端到端验证（`dustPyrotechnic/pr-review-swarm` PR #5/#6）。详细清单见 `action/test/integration/CHECKLIST.md`。Task 3.4 审计过程中发现并修复一个 Phase 2 遗留缺口：`supersedeOldReviewSets` 此前从未真正调用 `dismissReview`，一律走编辑 body 路径；已按设计文档 L211 补齐"先 dismiss、403 时降级编辑"的分支。另发现一个与本阶段无关的既有问题：analyze 阶段对纯文档 diff 会偶发 `any_required_stage_failed`（详见 CHECKLIST.md"已知问题"），留待后续单独排查。
+>
+> **2026-07-23 修订：机器人不再提交 APPROVE。** 明确要求"需要人来审核，agent 不能最终确认"，`computeFinalReviewEvent` 的 `pass` 分支从 `APPROVE` 改为 `COMMENT`（`default_mention` 仍在 pass 时触发，只是不再伴随批准状态）。相应地：`verdict.schema.json`/`VerdictSummary` 的 `final_review_event` 枚举移除 `APPROVE`；部署 CLI 不再检查/警告仓库的"Allow GitHub Actions to create and approve pull requests"权限（该限制只影响 APPROVE，REQUEST_CHANGES/COMMENT 不受影响，机器人不再需要这项权限），`check-actions-permissions.mjs` 模块已删除。`watchdog.ts` 的 `checkForPublishedFinalReview` 仍保留识别历史/人工产生的 `APPROVED` 状态用于 Check 回填，因为这是读取而非产出该状态。
 
 ### Task 3.1：真实裁决事件
 

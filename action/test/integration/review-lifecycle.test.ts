@@ -5,9 +5,12 @@ import type { Finding } from '../../src/lib/arbiter.js';
 import type { IdentityTuple } from '../../src/lib/identity-tuple.js';
 
 // design doc L300: "验证 REQUEST_CHANGES → 新 commit → APPROVE 完整生命周期"
-// This drives two real executePublish calls against one stateful in-memory
-// GitHub double, simulating: first push has a bug (REQUEST_CHANGES), author
-// fixes it in a second commit (APPROVE) — and asserts the first review gets
+// (updated: the bot never submits APPROVE — a human always gives final merge
+// confirmation — so a clean fix commit clears REQUEST_CHANGES down to a
+// neutral COMMENT, not an approving Review). This drives two real
+// executePublish calls against one stateful in-memory GitHub double,
+// simulating: first push has a bug (REQUEST_CHANGES), author fixes it in a
+// second commit (clean -> COMMENT) — and asserts the first review gets
 // properly superseded rather than left standing alongside the new one.
 
 function makeCoverageManifest(): CoverageManifest {
@@ -95,8 +98,8 @@ const engineCtx = {
   schemaVersion: 'finding-v1',
 };
 
-describe('REQUEST_CHANGES -> new commit -> APPROVE lifecycle', () => {
-  it('supersedes the old REQUEST_CHANGES review (dismissed) once the fix commit produces an APPROVE', async () => {
+describe('REQUEST_CHANGES -> new commit -> clean (COMMENT) lifecycle', () => {
+  it('supersedes the old REQUEST_CHANGES review (dismissed) once the fix commit comes back clean', async () => {
     const octokit = makeStatefulOctokit();
 
     const firstIdentity: IdentityTuple = {
@@ -145,13 +148,13 @@ describe('REQUEST_CHANGES -> new commit -> APPROVE lifecycle', () => {
       ...engineCtx,
     });
 
-    expect(secondResult.verdictSummary.final_review_event).toBe('APPROVE');
+    expect(secondResult.verdictSummary.final_review_event).toBe('COMMENT');
     expect(octokit.rest.pulls.dismissReview).toHaveBeenCalledWith(
       expect.objectContaining({ review_id: octokit._reviews[0].id }),
     );
     expect(octokit._reviews[0].state).toBe('DISMISSED');
 
     const activeReview = octokit._reviews.find((r) => r.commit_id === 'sha-with-fix');
-    expect(activeReview?.state).toBe('APPROVED');
+    expect(activeReview?.state).toBe('COMMENTED');
   });
 });

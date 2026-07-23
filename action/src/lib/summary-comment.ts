@@ -61,7 +61,7 @@ export function buildSummaryCommentBody(
     }
   }
 
-  if (verdictSummary.final_review_event === 'APPROVE' && ctx.defaultMention) {
+  if (verdictSummary.verdict === 'pass' && ctx.defaultMention) {
     lines.push('', `cc @${ctx.defaultMention}`);
   }
 

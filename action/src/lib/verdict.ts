@@ -38,11 +38,15 @@ export function computeVerdict(input: ComputeVerdictInput): ComputeVerdictResult
   return { verdict: 'pass', incompleteReasons: [] };
 }
 
+// The bot never gives final merge confirmation — a human always makes that
+// call. So even a clean (`pass`) verdict only ever posts a COMMENT-state
+// Review, never APPROVE; only REQUEST_CHANGES is a "real" review-state
+// change, and only when there's something to flag.
 export function computeFinalReviewEvent(
   verdict: Verdict,
   finalFindingsCount: number,
-): 'APPROVE' | 'REQUEST_CHANGES' | 'none' {
-  if (verdict === 'pass') return 'APPROVE';
+): 'COMMENT' | 'REQUEST_CHANGES' | 'none' {
+  if (verdict === 'pass') return 'COMMENT';
   if (verdict === 'changes_requested') return 'REQUEST_CHANGES';
   return finalFindingsCount > 0 ? 'REQUEST_CHANGES' : 'none';
 }

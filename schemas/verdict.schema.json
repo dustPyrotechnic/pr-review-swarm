@@ -22,6 +22,6 @@
     "incomplete_reasons": { "type": "array", "items": { "type": "string" } },
     "review_set_id": { "type": "string" },
     "final_findings_count": { "type": "integer", "minimum": 0 },
-    "final_review_event": { "type": "string", "enum": ["APPROVE", "REQUEST_CHANGES", "COMMENT", "none"] }
+    "final_review_event": { "type": "string", "enum": ["REQUEST_CHANGES", "COMMENT", "none"] }
   }
 }

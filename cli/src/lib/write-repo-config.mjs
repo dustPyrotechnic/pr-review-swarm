@@ -13,7 +13,7 @@ trust_all_prs: true
 # trusted_users:
 #   - some-github-login   # only matters when trust_all_prs is false: authors reviewed even without OWNER/MEMBER/COLLABORATOR association
 
-# default_mention: your-github-login   # mentioned in the summary comment when a PR is approved
+# default_mention: your-github-login   # mentioned in the summary comment when a PR comes back clean (the bot never approves/merges — a human still confirms)
 
 # ignore_globs:
 #   - "vendor/**"

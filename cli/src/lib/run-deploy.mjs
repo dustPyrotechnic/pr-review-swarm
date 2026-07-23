@@ -1,6 +1,6 @@
 export async function runDeploy(options, deps) {
   const { deepseekKeyFlag, directPush, force } = options;
-  const { checkGhCli, detectRepo, resolveDeepseekKey, writeWorkflows, writeRepoConfig, setSecret, checkActionsPermissions, deployChanges, pinnedSha } = deps;
+  const { checkGhCli, detectRepo, resolveDeepseekKey, writeWorkflows, writeRepoConfig, setSecret, deployChanges, pinnedSha } = deps;
 
   await checkGhCli();
   const { owner, repo } = await detectRepo();
@@ -10,8 +10,6 @@ export async function runDeploy(options, deps) {
   const repoConfigResult = writeRepoConfig({ force });
 
   await setSecret({ owner, repo, key });
-
-  const permissions = await checkActionsPermissions({ owner, repo });
 
   const deployResult = await deployChanges({
     paths: [...workflowsResult.written, ...repoConfigResult.written],
@@ -24,8 +22,6 @@ export async function runDeploy(options, deps) {
     workflowFiles: workflowsResult.written,
     repoConfigFile: repoConfigResult.written,
     secretSet: true,
-    actionsPermissionsOk: permissions.ok,
-    actionsPermissionsHint: permissions.hint,
     deployResult,
   };
 }

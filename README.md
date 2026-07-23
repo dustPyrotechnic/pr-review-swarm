@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**Phase 1-3 代码均已完成**（shadow mode → comment-only → 真实 REQUEST_CHANGES/APPROVE），并在沙盒仓库端到端验证通过。`publish` 现在会按裁决结果发布真正的 GitHub Review（`APPROVE`/`REQUEST_CHANGES`），但**尚未**在任何目标仓库把 `PR Review Swarm / verdict` 设为 required check（Phase 4，需要仓库所有者手动配置分支保护并观察一段时间，见下）。完整设计见 [`docs/plans/2026-07-13-pr-review-swarm-design.md`](docs/plans/2026-07-13-pr-review-swarm-design.md)，实施计划见 [`docs/plans/2026-07-18-pr-review-swarm-implementation-plan.md`](docs/plans/2026-07-18-pr-review-swarm-implementation-plan.md)，安全与集成测试对账见 [`action/test/integration/CHECKLIST.md`](action/test/integration/CHECKLIST.md)。
+**Phase 1-3 代码均已完成**（shadow mode → comment-only → 真实 REQUEST_CHANGES），并在沙盒仓库端到端验证通过。`publish` 现在会按裁决结果发布真正的 GitHub Review：有问题时提交 `REQUEST_CHANGES`，没问题时只提交 `COMMENT`（**机器人永不提交 APPROVE，合并与否始终由人工最终确认**）。Phase 4（把 `PR Review Swarm / verdict` 设为 required check）已按需求跳过，不在计划范围内。完整设计见 [`docs/plans/2026-07-13-pr-review-swarm-design.md`](docs/plans/2026-07-13-pr-review-swarm-design.md)，实施计划见 [`docs/plans/2026-07-18-pr-review-swarm-implementation-plan.md`](docs/plans/2026-07-18-pr-review-swarm-implementation-plan.md)，安全与集成测试对账见 [`action/test/integration/CHECKLIST.md`](action/test/integration/CHECKLIST.md)。
 
 ## 目录结构（计划）
 
@@ -91,7 +91,7 @@ jobs:
 
 - 绝不 checkout PR head、不执行 PR 中的任何代码。
 - `analyze`（LLM 分析）与 `publish`（发布结果）权限严格隔离：`analyze` 不持有可写 GitHub 凭据，`publish` 不持有 DeepSeek 凭据。
-- 机器人只审核，不合并；`REQUEST_CHANGES`/`APPROVE` 由确定性规则计算，不由模型自行决定。
+- 机器人只审核，不合并，也永不提交 APPROVE——最终合并确认始终是人工判断；`REQUEST_CHANGES`/`COMMENT` 由确定性规则计算，不由模型自行决定。
 - 独立的 `status-finalize` Job 保证 Check Run 始终能到达终态，不会因上游 Job 失败或被取消而卡在 `in_progress`。
 
 完整安全边界见设计文档「权限与安全边界」一节。

@@ -35,7 +35,9 @@ export interface VerdictSummary {
   incomplete_reasons?: string[];
   review_set_id: string;
   final_findings_count: number;
-  final_review_event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT' | 'none';
+  // No APPROVE: the bot never gives final merge confirmation — a human
+  // always does. A clean (pass) verdict still only posts COMMENT.
+  final_review_event: 'REQUEST_CHANGES' | 'COMMENT' | 'none';
 }
 
 export interface PublishCoreInput {
@@ -363,9 +365,10 @@ export async function executePublish(input: ExecutePublishInput): Promise<Publis
 
       const unlocatable = batch.findings.filter((f) => !isFindingLocatable(f, currentFileDiffs));
       const locatable = batch.findings.filter((f) => isFindingLocatable(f, currentFileDiffs));
-      // Only the final batch carries the real REQUEST_CHANGES/APPROVE event —
-      // earlier batches stay COMMENT so GitHub doesn't flip the PR's review
-      // state before all findings have actually been posted.
+      // Only the final batch carries the real REQUEST_CHANGES event (never
+      // APPROVE — a human always gives final merge confirmation, not the
+      // bot) — earlier batches stay COMMENT so GitHub doesn't flip the PR's
+      // review state before all findings have actually been posted.
       const isFinalBatch = batch.batchIndex === batch.batchCount - 1;
       const event = isFinalBatch ? result.verdictSummary.final_review_event : 'COMMENT';
       const bannerReasons =
@@ -401,7 +404,7 @@ export async function executePublish(input: ExecutePublishInput): Promise<Publis
     schemaVersion: input.schemaVersion,
     verdict: result.verdictSummary.verdict,
     reviewSetId,
-    ...(result.verdictSummary.final_review_event === 'APPROVE' && input.defaultMention
+    ...(result.verdictSummary.verdict === 'pass' && input.defaultMention
       ? { defaultMention: input.defaultMention }
       : {}),
   };

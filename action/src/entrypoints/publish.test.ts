@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { buildPublishResult, executePublish, resolveEngineRevision } from './publish.js';
 import { validate } from '../lib/schema-validator.js';
@@ -57,11 +60,11 @@ const baseInput = {
 };
 
 describe('buildPublishResult', () => {
-  it('produces a schema-valid verdict summary for the pass case, with final_review_event APPROVE', () => {
+  it('produces a schema-valid verdict summary for the pass case, with final_review_event COMMENT (never APPROVE)', () => {
     const result = buildPublishResult({ ...baseInput, findings: [] });
 
     expect(result.verdictSummary.verdict).toBe('pass');
-    expect(result.verdictSummary.final_review_event).toBe('APPROVE');
+    expect(result.verdictSummary.final_review_event).toBe('COMMENT');
     const validation = validate('https://pr-review-swarm/schemas/verdict.schema.json', result.verdictSummary);
     expect(validation.valid).toBe(true);
   });
@@ -115,6 +118,25 @@ describe('buildPublishResult', () => {
 
     expect(result.markdownSummary).toContain('changes_requested');
     expect(result.markdownSummary).toContain('src/foo.ts');
+  });
+});
+
+describe('publish.ts never submits an approving Review', () => {
+  it('never assigns event/final_review_event to the APPROVE literal — the bot never gives final merge confirmation', () => {
+    const source = readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), 'publish.ts'),
+      'utf-8',
+    );
+    // `review.state === 'APPROVED'` (dismissing a legacy/human APPROVED
+    // review) legitimately contains the substring "APPROVE" — filter that
+    // one known-safe line out before scanning for the literal 'APPROVE'.
+    const runtimeSource = source
+      .split('\n')
+      .filter((line) => !line.includes('APPROVED'))
+      .join('\n');
+
+    expect(runtimeSource).not.toContain("'APPROVE'");
+    expect(runtimeSource).not.toContain('"APPROVE"');
   });
 });
 
@@ -230,7 +252,7 @@ describe('executePublish', () => {
     expect(result.verdictSummary.final_review_event).toBe('REQUEST_CHANGES');
   });
 
-  it('publishes an APPROVE batch and mentions the configured default_mention when the verdict is pass', async () => {
+  it('publishes a COMMENT batch (never APPROVE) and still mentions the configured default_mention when the verdict is pass', async () => {
     const octokit = makeMockOctokit();
     const result = await executePublish({
       octokit: octokit as never,
@@ -248,9 +270,9 @@ describe('executePublish', () => {
     });
 
     expect(octokit.rest.pulls.createReview).toHaveBeenCalledWith(
-      expect.objectContaining({ event: 'APPROVE' }),
+      expect.objectContaining({ event: 'COMMENT' }),
     );
-    expect(result.verdictSummary.final_review_event).toBe('APPROVE');
+    expect(result.verdictSummary.final_review_event).toBe('COMMENT');
     const summaryBody = octokit.rest.issues.createComment.mock.calls[0][0].body as string;
     expect(summaryBody).toContain('@dustPyrotechnic');
   });

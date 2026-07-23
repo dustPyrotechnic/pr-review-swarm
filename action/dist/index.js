@@ -33962,7 +33962,7 @@ var init_verdict_schema = __esm({
         incomplete_reasons: { type: "array", items: { type: "string" } },
         review_set_id: { type: "string" },
         final_findings_count: { type: "integer", minimum: 0 },
-        final_review_event: { type: "string", enum: ["APPROVE", "REQUEST_CHANGES", "COMMENT", "none"] }
+        final_review_event: { type: "string", enum: ["REQUEST_CHANGES", "COMMENT", "none"] }
       }
     };
   }
@@ -37574,7 +37574,7 @@ function computeVerdict(input) {
 }
 function computeFinalReviewEvent(verdict, finalFindingsCount) {
   if (verdict === "pass")
-    return "APPROVE";
+    return "COMMENT";
   if (verdict === "changes_requested")
     return "REQUEST_CHANGES";
   return finalFindingsCount > 0 ? "REQUEST_CHANGES" : "none";
@@ -37788,7 +37788,7 @@ function buildSummaryCommentBody(ctx, verdictSummary, findings) {
       lines.push(`- \`${finding.path}:${finding.line}\` [${finding.severity}] ${finding.title}`);
     }
   }
-  if (verdictSummary.final_review_event === "APPROVE" && ctx.defaultMention) {
+  if (verdictSummary.verdict === "pass" && ctx.defaultMention) {
     lines.push("", `cc @${ctx.defaultMention}`);
   }
   lines.push("", findStableMarkerId(ctx), encodeResultMarker(ctx));
@@ -38098,7 +38098,7 @@ async function executePublish(input) {
     schemaVersion: input.schemaVersion,
     verdict: result.verdictSummary.verdict,
     reviewSetId,
-    ...result.verdictSummary.final_review_event === "APPROVE" && input.defaultMention ? { defaultMention: input.defaultMention } : {}
+    ...result.verdictSummary.verdict === "pass" && input.defaultMention ? { defaultMention: input.defaultMention } : {}
   };
   await upsertSummaryComment(
     input.octokit,

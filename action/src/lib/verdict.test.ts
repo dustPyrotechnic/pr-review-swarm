@@ -124,8 +124,8 @@ describe('computeVerdict', () => {
 });
 
 describe('computeFinalReviewEvent', () => {
-  it('returns APPROVE for a pass verdict', () => {
-    expect(computeFinalReviewEvent('pass', 0)).toBe('APPROVE');
+  it('returns COMMENT (never APPROVE) for a pass verdict — the bot never gives final merge confirmation, a human always does', () => {
+    expect(computeFinalReviewEvent('pass', 0)).toBe('COMMENT');
   });
 
   it('returns REQUEST_CHANGES for a changes_requested verdict', () => {
@@ -139,4 +139,13 @@ describe('computeFinalReviewEvent', () => {
   it('returns none for an incomplete verdict with zero findings — nothing to request changes on', () => {
     expect(computeFinalReviewEvent('incomplete', 0)).toBe('none');
   });
+
+  it.each(['pass', 'changes_requested', 'incomplete'] as const)(
+    'never returns APPROVE for verdict=%s at any findings count — the bot never submits an approving Review',
+    (verdict) => {
+      for (const count of [0, 1, 5]) {
+        expect(computeFinalReviewEvent(verdict, count)).not.toBe('APPROVE');
+      }
+    },
+  );
 });

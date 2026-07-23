@@ -9,7 +9,6 @@ function makeDeps(overrides = {}) {
     writeWorkflows: vi.fn().mockReturnValue({ written: ['.github/workflows/pr-review.yml', '.github/workflows/pr-review-watchdog.yml'], overwritten: [] }),
     writeRepoConfig: vi.fn().mockReturnValue({ written: ['.github/pr-review-swarm.yml'], skipped: [] }),
     setSecret: vi.fn().mockResolvedValue(undefined),
-    checkActionsPermissions: vi.fn().mockResolvedValue({ ok: true }),
     deployChanges: vi.fn().mockResolvedValue({ mode: 'pr', prUrl: 'https://github.com/octo/repo/pull/1' }),
     pinnedSha: 'abc123',
     ...overrides,
@@ -26,7 +25,6 @@ describe('runDeploy', () => {
     expect(deps.writeWorkflows).toHaveBeenCalledWith(expect.objectContaining({ pinnedSha: 'abc123', force: false }));
     expect(deps.writeRepoConfig).toHaveBeenCalledWith(expect.objectContaining({ force: false }));
     expect(deps.setSecret).toHaveBeenCalledWith(expect.objectContaining({ owner: 'octo', repo: 'repo', key: 'sk-test' }));
-    expect(deps.checkActionsPermissions).toHaveBeenCalledWith(expect.objectContaining({ owner: 'octo', repo: 'repo' }));
     expect(deps.deployChanges).toHaveBeenCalled();
 
     expect(summary).toEqual(
@@ -36,19 +34,15 @@ describe('runDeploy', () => {
         workflowFiles: ['.github/workflows/pr-review.yml', '.github/workflows/pr-review-watchdog.yml'],
         repoConfigFile: ['.github/pr-review-swarm.yml'],
         secretSet: true,
-        actionsPermissionsOk: true,
         deployResult: { mode: 'pr', prUrl: 'https://github.com/octo/repo/pull/1' },
       }),
     );
   });
 
-  it('does not fail the whole run when Actions permissions check comes back not-ok — surfaces the hint instead', async () => {
-    const deps = makeDeps({ checkActionsPermissions: vi.fn().mockResolvedValue({ ok: false, hint: 'go check settings' }) });
-    const summary = await runDeploy({ deepseekKeyFlag: undefined, directPush: false, force: false }, deps);
-
-    expect(summary.actionsPermissionsOk).toBe(false);
-    expect(summary.actionsPermissionsHint).toBe('go check settings');
-    expect(deps.deployChanges).toHaveBeenCalled();
+  it('does not call an Actions-permissions check — the bot never creates/approves PRs, so it does not need that permission', async () => {
+    const deps = makeDeps();
+    expect(deps.checkActionsPermissions).toBeUndefined();
+    await runDeploy({ deepseekKeyFlag: undefined, directPush: false, force: false }, deps);
   });
 
   it('passes directPush through to deployChanges', async () => {

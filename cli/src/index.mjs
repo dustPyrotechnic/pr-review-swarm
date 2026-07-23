@@ -10,7 +10,6 @@ import { resolveDeepseekKey } from './lib/resolve-deepseek-key.mjs';
 import { writeWorkflows } from './lib/write-workflows.mjs';
 import { writeRepoConfig } from './lib/write-repo-config.mjs';
 import { setSecret } from './lib/set-secret.mjs';
-import { checkActionsPermissions } from './lib/check-actions-permissions.mjs';
 import { deployChanges } from './lib/deploy-changes.mjs';
 import { runDeploy } from './lib/run-deploy.mjs';
 
@@ -70,7 +69,6 @@ async function main() {
       writeWorkflows: (opts) => writeWorkflows({ ...opts, fs }),
       writeRepoConfig: (opts) => writeRepoConfig({ ...opts, fs }),
       setSecret,
-      checkActionsPermissions,
       deployChanges,
       pinnedSha,
     },
@@ -80,11 +78,6 @@ async function main() {
   console.log(`  Workflow files: ${summary.workflowFiles.join(', ') || '(none written)'}`);
   console.log(`  Repo config: ${summary.repoConfigFile.join(', ') || '(already existed, left untouched)'}`);
   console.log(`  DEEPSEEK_API_KEY secret: set on ${summary.owner}/${summary.repo}`);
-  console.log(
-    summary.actionsPermissionsOk
-      ? '  Actions permissions: ok'
-      : `  Actions permissions: ⚠️ ${summary.actionsPermissionsHint}`,
-  );
   if (summary.deployResult.mode === 'pr') {
     console.log(`  Pull request: ${summary.deployResult.prUrl}`);
     console.log('\nNext steps: review and merge the PR above.');
@@ -92,8 +85,9 @@ async function main() {
     console.log(`  ${summary.deployResult.warning}`);
   }
   console.log(
-    'After merging, the bot reviews new PRs automatically. It never has merge permission — see Phase 1-4 in ' +
-      'docs/plans for how to progress from shadow mode to a required check, if you want one.',
+    'After merging, the bot reviews new PRs automatically. It never approves or merges — a human always gives ' +
+      'final confirmation. See Phase 1-4 in docs/plans for how to progress from shadow mode to a required check, ' +
+      'if you want one.',
   );
 }
 

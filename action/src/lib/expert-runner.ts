@@ -79,17 +79,36 @@ function buildExpertSystemPrompt(agentName: string, skillBodies: string[]): stri
   ].join('\n\n');
 }
 
+// DeepSeek's tool-calling isn't strict-JSON-Schema-typed, and has been
+// observed (2026-07-23 sandbox reproduction, two independent runs) to
+// return coverage_complete as the literal string "true"/"false" instead of
+// a JSON boolean on an otherwise well-formed response. This is an
+// unambiguous, benign type near-miss on a control-flow-only field (never
+// finding evidence/content, so normalizing it doesn't weaken the
+// evidence-integrity boundary) — safe to coerce rather than reject.
+// Deliberately narrow: only the exact strings "true"/"false" are coerced,
+// nothing else (a number, null, or any other type is still rejected as a
+// genuine validation failure).
+function coerceStringifiedBoolean(raw: unknown): unknown {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const obj = raw as Record<string, unknown>;
+  if (obj.coverage_complete === 'true') return { ...obj, coverage_complete: true };
+  if (obj.coverage_complete === 'false') return { ...obj, coverage_complete: false };
+  return raw;
+}
+
 async function requestAndValidate(
   input: RunExpertInput,
   systemPrompt: string,
   userPrompt: string,
 ): Promise<ExpertOutput> {
-  const raw = await input.client.sendStructuredRequest({
+  const rawResponse = await input.client.sendStructuredRequest({
     model: input.model,
     systemPrompt,
     userPrompt,
     jsonSchema: expertOutputSchemaForModel,
   });
+  const raw = coerceStringifiedBoolean(rawResponse);
 
   const result = validate<ExpertOutput>(
     'https://pr-review-swarm/schemas/expert-output.schema.json',

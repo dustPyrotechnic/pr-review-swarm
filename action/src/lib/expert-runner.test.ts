@@ -92,16 +92,20 @@ describe('runExpert', () => {
   });
 
   // Real-world evidence (2026-07-23 sandbox reproduction): DeepSeek
-  // occasionally returns coverage_complete as a non-boolean (e.g. a
-  // stringified "true") on an otherwise-valid tool call — a stochastic
+  // occasionally returns a genuinely malformed response (e.g. a missing
+  // required field) on an otherwise-normal tool call — a stochastic
   // formatting slip, not a deterministic prompt defect: an identical
-  // request succeeded on the very next attempt. One retry is cheap
-  // insurance against this class of one-off model glitch.
-  it('retries once and succeeds when the first response fails schema validation but the retry is valid', async () => {
+  // request succeeded on a subsequent attempt. One retry is cheap
+  // insurance against this class of one-off model glitch. (Stringified
+  // "true"/"false" for coverage_complete specifically is coerced instead
+  // of retried — see the dedicated tests below — since retrying was
+  // observed NOT to reliably fix it: two independent sandbox runs both
+  // returned the string form on every attempt.)
+  it('retries once and succeeds when the first response is genuinely malformed but the retry is valid', async () => {
     const client = {
       sendStructuredRequest: vi
         .fn()
-        .mockResolvedValueOnce({ ...makeValidExpertOutput(1, true), coverage_complete: 'true' })
+        .mockResolvedValueOnce({ not: 'a valid expert output' })
         .mockResolvedValueOnce(makeValidExpertOutput(1, true)),
     };
     const retrySleep = vi.fn().mockResolvedValue(undefined);
@@ -112,9 +116,9 @@ describe('runExpert', () => {
     expect(result.output.candidate_findings).toHaveLength(1);
   });
 
-  it('gives up and throws after exhausting maxSchemaRetries on persistent schema-invalid responses', async () => {
+  it('gives up and throws after exhausting maxSchemaRetries on persistently malformed responses', async () => {
     const client = {
-      sendStructuredRequest: vi.fn().mockResolvedValue({ ...makeValidExpertOutput(1, true), coverage_complete: 'true' }),
+      sendStructuredRequest: vi.fn().mockResolvedValue({ not: 'a valid expert output' }),
     };
     const retrySleep = vi.fn().mockResolvedValue(undefined);
 
@@ -126,10 +130,47 @@ describe('runExpert', () => {
 
   it('includes the actually-observed offending value in the error, so job logs show what the model really returned', async () => {
     const client = {
+      sendStructuredRequest: vi.fn().mockResolvedValue({ not: 'a valid expert output' }),
+    };
+
+    await expect(runExpert({ ...baseInput, client })).rejects.toThrow(/observed top-level fields/);
+  });
+
+  // Real-world evidence (2026-07-23 sandbox reproduction, two independent
+  // runs): DeepSeek returned coverage_complete as the literal string
+  // "true" instead of the JSON boolean, on an otherwise well-formed tool
+  // call — e.g. {"shard_id":"diff","agent":"generic-security",
+  // "coverage_complete":"true"}. This is an unambiguous, benign type
+  // near-miss on a control-flow-only field (not finding evidence/content),
+  // and a well-known quirk of tool-calling APIs that don't enforce strict
+  // JSON-schema typing — safe to normalize rather than reject.
+  it('coerces a literal "true"/"false" string for coverage_complete instead of failing validation', async () => {
+    const client = {
       sendStructuredRequest: vi.fn().mockResolvedValue({ ...makeValidExpertOutput(1, true), coverage_complete: 'true' }),
     };
 
-    await expect(runExpert({ ...baseInput, client })).rejects.toThrow(/coverage_complete.*"true"|"true".*coverage_complete/);
+    const result = await runExpert({ ...baseInput, client });
+
+    expect(client.sendStructuredRequest).toHaveBeenCalledTimes(1); // no retry needed
+    expect(result.hardLimitHit).toBe(false);
+  });
+
+  it('coerces coverage_complete: "false" to boolean false (still marks hardLimitHit)', async () => {
+    const client = {
+      sendStructuredRequest: vi.fn().mockResolvedValue({ ...makeValidExpertOutput(1, true), coverage_complete: 'false' }),
+    };
+
+    const result = await runExpert({ ...baseInput, client });
+
+    expect(result.hardLimitHit).toBe(true);
+  });
+
+  it('does not coerce other invalid coverage_complete values (e.g. a number) — still a genuine validation failure', async () => {
+    const client = {
+      sendStructuredRequest: vi.fn().mockResolvedValue({ ...makeValidExpertOutput(1, true), coverage_complete: 1 }),
+    };
+
+    await expect(runExpert({ ...baseInput, client })).rejects.toThrow(/schema validation/);
   });
 
   it('does not retry a network/transport error — only schema-validation failures are retried here', async () => {

@@ -37140,13 +37140,24 @@ function buildExpertSystemPrompt(agentName, skillBodies) {
     ...skillBodies
   ].join("\n\n");
 }
+function coerceStringifiedBoolean(raw) {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw))
+    return raw;
+  const obj = raw;
+  if (obj.coverage_complete === "true")
+    return { ...obj, coverage_complete: true };
+  if (obj.coverage_complete === "false")
+    return { ...obj, coverage_complete: false };
+  return raw;
+}
 async function requestAndValidate(input, systemPrompt, userPrompt) {
-  const raw = await input.client.sendStructuredRequest({
+  const rawResponse = await input.client.sendStructuredRequest({
     model: input.model,
     systemPrompt,
     userPrompt,
     jsonSchema: expertOutputSchemaForModel
   });
+  const raw = coerceStringifiedBoolean(rawResponse);
   const result = validate(
     "https://pr-review-swarm/schemas/expert-output.schema.json",
     raw

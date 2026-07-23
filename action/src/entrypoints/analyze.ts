@@ -46,6 +46,11 @@ export interface AnalyzeCoreResult {
   hardLimitHit: boolean;
   anyRequiredStageFailed: boolean;
   internalDiagnostics: InternalDiagnosticEntry[];
+  // Diagnostic only (not schema/output-critical): the underlying error
+  // message from whichever stage first set anyRequiredStageFailed, so the
+  // job log doesn't silently swallow the real cause. Never include finding
+  // content or PR data here, since it flows into core.warning/job logs.
+  stageFailureReason?: string;
 }
 
 function agentCategory(agentName: string): string {
@@ -103,6 +108,7 @@ export async function runAnalysis(input: AnalyzeCoreInput): Promise<AnalyzeCoreR
   let hardLimitHit = false;
   let stop = false;
   let anyRequiredStageFailed = false;
+  let stageFailureReason: string | undefined;
 
   outer: for (const shard of input.prepareArtifact.shards) {
     const filePaths = shard.files.map((f) => f.path);
@@ -121,12 +127,13 @@ export async function runAnalysis(input: AnalyzeCoreInput): Promise<AnalyzeCoreR
           client: input.client,
           maxCandidateFindingsPerAgentPerShard: input.limits.maxCandidateFindingsPerAgentPerShard,
         });
-      } catch {
+      } catch (err) {
         // A DeepSeek outage, a model response that fails expert-output schema
         // validation, or a malformed skill file (skillsForAgent/loadSkillFn)
         // is exactly as "required stage failed" as a verifier failure below —
         // degrade to incomplete instead of hard-failing the whole job.
         anyRequiredStageFailed = true;
+        stageFailureReason = err instanceof Error ? err.message : String(err);
         stop = true;
         break outer;
       }
@@ -160,8 +167,9 @@ export async function runAnalysis(input: AnalyzeCoreInput): Promise<AnalyzeCoreR
     if (validRequests.length > 0) {
       try {
         requestedSkillBodies = validRequests.map((name) => loadSkillFn(name).body);
-      } catch {
+      } catch (err) {
         anyRequiredStageFailed = true;
+        stageFailureReason ??= err instanceof Error ? err.message : String(err);
         validRequests = [];
       }
     }
@@ -180,8 +188,9 @@ export async function runAnalysis(input: AnalyzeCoreInput): Promise<AnalyzeCoreR
             client: input.client,
             maxCandidateFindingsPerAgentPerShard: input.limits.maxCandidateFindingsPerAgentPerShard,
           });
-        } catch {
+        } catch (err) {
           anyRequiredStageFailed = true;
+          stageFailureReason ??= err instanceof Error ? err.message : String(err);
           break supplement;
         }
 
@@ -248,6 +257,7 @@ export async function runAnalysis(input: AnalyzeCoreInput): Promise<AnalyzeCoreR
     } catch (err) {
       if (err instanceof VerifierUnavailableError) {
         anyRequiredStageFailed = true;
+        stageFailureReason ??= err.message;
         continue;
       }
       throw err;
@@ -265,7 +275,14 @@ export async function runAnalysis(input: AnalyzeCoreInput): Promise<AnalyzeCoreR
     hard_limit_hit: input.prepareArtifact.coverage_manifest.hard_limit_hit || hardLimitHit,
   };
 
-  return { findings, coverageManifest, hardLimitHit, anyRequiredStageFailed, internalDiagnostics };
+  return {
+    findings,
+    coverageManifest,
+    hardLimitHit,
+    anyRequiredStageFailed,
+    internalDiagnostics,
+    ...(stageFailureReason !== undefined ? { stageFailureReason } : {}),
+  };
 }
 
 export async function run(): Promise<void> {
@@ -300,6 +317,12 @@ export async function run(): Promise<void> {
       maxFinalFindingsPerRun: centralLimits.maxFinalFindingsPerRun,
     },
   });
+
+  if (result.stageFailureReason) {
+    // Diagnostic only — never contains PR content, just the calling code's
+    // own error message (schema validation errors, HTTP status text, etc).
+    core.warning(`analyze: any_required_stage_failed — ${result.stageFailureReason}`);
+  }
 
   core.setOutput('hard_limit_hit', String(result.hardLimitHit));
   core.setOutput('any_required_stage_failed', String(result.anyRequiredStageFailed));

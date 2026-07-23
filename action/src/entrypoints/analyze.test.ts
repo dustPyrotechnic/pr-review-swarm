@@ -308,6 +308,23 @@ describe('runAnalysis', () => {
     expect(client.sendStructuredRequest).toHaveBeenCalledTimes(1);
   });
 
+  it('surfaces the underlying error message when an expert call fails, instead of swallowing it silently', async () => {
+    const client = {
+      sendStructuredRequest: vi.fn().mockRejectedValue(new Error('expert-runner: model response failed expert-output schema validation: must have required property \'shard_id\'')),
+    };
+
+    const result = await runAnalysis({
+      prepareArtifact: makeArtifact(),
+      skillIndexMd: SKILL_INDEX_MD,
+      loadSkillFn: fakeLoadSkill,
+      model: 'deepseek-test-model',
+      client,
+      limits: baseLimits,
+    });
+
+    expect(result.stageFailureReason).toContain('shard_id');
+  });
+
   it('marks anyRequiredStageFailed instead of throwing when loading an equipped skill fails', async () => {
     const brokenLoadSkill = (name: string): LoadedSkill => {
       if (name === 'generic-correctness') {

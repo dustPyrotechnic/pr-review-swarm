@@ -19807,10 +19807,10 @@ Support boolean input list: \`true | True | TRUE | false | False | FALSE\``);
       (0, command_1.issueCommand)("error", (0, utils_1.toCommandProperties)(properties), message instanceof Error ? message.toString() : message);
     }
     exports2.error = error;
-    function warning2(message, properties = {}) {
+    function warning3(message, properties = {}) {
       (0, command_1.issueCommand)("warning", (0, utils_1.toCommandProperties)(properties), message instanceof Error ? message.toString() : message);
     }
-    exports2.warning = warning2;
+    exports2.warning = warning3;
     function notice(message, properties = {}) {
       (0, command_1.issueCommand)("notice", (0, utils_1.toCommandProperties)(properties), message instanceof Error ? message.toString() : message);
     }
@@ -37360,6 +37360,7 @@ async function runAnalysis(input) {
   let hardLimitHit = false;
   let stop = false;
   let anyRequiredStageFailed = false;
+  let stageFailureReason;
   outer:
     for (const shard of input.prepareArtifact.shards) {
       const filePaths = shard.files.map((f) => f.path);
@@ -37377,8 +37378,9 @@ async function runAnalysis(input) {
             client: input.client,
             maxCandidateFindingsPerAgentPerShard: input.limits.maxCandidateFindingsPerAgentPerShard
           });
-        } catch {
+        } catch (err) {
           anyRequiredStageFailed = true;
+          stageFailureReason = err instanceof Error ? err.message : String(err);
           stop = true;
           break outer;
         }
@@ -37408,8 +37410,9 @@ async function runAnalysis(input) {
     if (validRequests.length > 0) {
       try {
         requestedSkillBodies = validRequests.map((name) => loadSkillFn(name).body);
-      } catch {
+      } catch (err) {
         anyRequiredStageFailed = true;
+        stageFailureReason ??= err instanceof Error ? err.message : String(err);
         validRequests = [];
       }
     }
@@ -37428,8 +37431,9 @@ async function runAnalysis(input) {
               client: input.client,
               maxCandidateFindingsPerAgentPerShard: input.limits.maxCandidateFindingsPerAgentPerShard
             });
-          } catch {
+          } catch (err) {
             anyRequiredStageFailed = true;
+            stageFailureReason ??= err instanceof Error ? err.message : String(err);
             break supplement;
           }
           allCandidates.push(...result.output.candidate_findings);
@@ -37488,6 +37492,7 @@ async function runAnalysis(input) {
     } catch (err) {
       if (err instanceof VerifierUnavailableError) {
         anyRequiredStageFailed = true;
+        stageFailureReason ??= err.message;
         continue;
       }
       throw err;
@@ -37501,7 +37506,14 @@ async function runAnalysis(input) {
     ...input.prepareArtifact.coverage_manifest,
     hard_limit_hit: input.prepareArtifact.coverage_manifest.hard_limit_hit || hardLimitHit
   };
-  return { findings, coverageManifest, hardLimitHit, anyRequiredStageFailed, internalDiagnostics };
+  return {
+    findings,
+    coverageManifest,
+    hardLimitHit,
+    anyRequiredStageFailed,
+    internalDiagnostics,
+    ...stageFailureReason !== void 0 ? { stageFailureReason } : {}
+  };
 }
 async function run4() {
   const prepareArtifactRaw = core5.getInput("prepare_artifact", { required: true });
@@ -37526,6 +37538,9 @@ async function run4() {
       maxFinalFindingsPerRun: central_limits_default.maxFinalFindingsPerRun
     }
   });
+  if (result.stageFailureReason) {
+    core5.warning(`analyze: any_required_stage_failed \u2014 ${result.stageFailureReason}`);
+  }
   core5.setOutput("hard_limit_hit", String(result.hardLimitHit));
   core5.setOutput("any_required_stage_failed", String(result.anyRequiredStageFailed));
   core5.setOutput("findings", JSON.stringify(result.findings));

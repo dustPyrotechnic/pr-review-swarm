@@ -13,5 +13,6 @@
   "maxBytesPerShard": 200000,
   "maxShardsPerRun": 20,
   "maxFindingsPerReviewBatch": 20,
-  "maxReviewBodyChars": 60000
+  "maxReviewBodyChars": 60000,
+  "maxExpertSchemaRetries": 1
 }

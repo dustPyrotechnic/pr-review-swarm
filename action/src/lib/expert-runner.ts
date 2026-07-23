@@ -3,7 +3,15 @@ import candidateFindingSchema from '../../../schemas/candidate-finding.schema.js
 import { validate } from './schema-validator.js';
 import { dereferenceSchema } from './schema-dereferencer.js';
 import { wrapUntrustedContent } from '../prompts/data-boundary.js';
+import { withRetry } from './retry.js';
 import type { StructuredRequestInput } from './deepseek-client.js';
+
+// Thrown when a model response is well-formed JSON but doesn't conform to
+// the expert-output schema (e.g. coverage_complete returned as a string
+// instead of a boolean). Distinct from network/transport errors so callers
+// can retry this specific, empirically stochastic failure mode without
+// also retrying on things that shouldn't be retried blindly.
+export class ExpertOutputSchemaError extends Error {}
 
 const expertOutputSchemaForModel = dereferenceSchema(expertOutputSchema, {
   [candidateFindingSchema.$id]: candidateFindingSchema,
@@ -49,6 +57,12 @@ export interface RunExpertInput {
   model: string;
   client: ExpertClient;
   maxCandidateFindingsPerAgentPerShard: number;
+  // Retries specifically for a schema-invalid-but-otherwise-successful
+  // response (see ExpertOutputSchemaError) — separate from any
+  // network-level retry the client itself performs. Defaults to 0 (no
+  // retry) so existing callers/tests are unaffected unless they opt in.
+  maxSchemaRetries?: number;
+  retrySleep?: (ms: number) => Promise<void>;
 }
 
 export interface RunExpertResult {
@@ -65,10 +79,11 @@ function buildExpertSystemPrompt(agentName: string, skillBodies: string[]): stri
   ].join('\n\n');
 }
 
-export async function runExpert(input: RunExpertInput): Promise<RunExpertResult> {
-  const systemPrompt = buildExpertSystemPrompt(input.agentName, input.systemPromptSkills);
-  const userPrompt = wrapUntrustedContent('diff-and-context', input.shardContent);
-
+async function requestAndValidate(
+  input: RunExpertInput,
+  systemPrompt: string,
+  userPrompt: string,
+): Promise<ExpertOutput> {
   const raw = await input.client.sendStructuredRequest({
     model: input.model,
     systemPrompt,
@@ -81,14 +96,27 @@ export async function runExpert(input: RunExpertInput): Promise<RunExpertResult>
     raw,
   );
   if (!result.valid) {
-    throw new Error(
+    throw new ExpertOutputSchemaError(
       `expert-runner: model response failed expert-output schema validation: ${result.errors.join('; ')}`,
     );
   }
 
-  const hardLimitHit =
-    result.data.coverage_complete !== true ||
-    result.data.candidate_findings.length >= input.maxCandidateFindingsPerAgentPerShard;
+  return result.data;
+}
 
-  return { output: result.data, hardLimitHit };
+export async function runExpert(input: RunExpertInput): Promise<RunExpertResult> {
+  const systemPrompt = buildExpertSystemPrompt(input.agentName, input.systemPromptSkills);
+  const userPrompt = wrapUntrustedContent('diff-and-context', input.shardContent);
+
+  const data = await withRetry(() => requestAndValidate(input, systemPrompt, userPrompt), {
+    maxRetries: input.maxSchemaRetries ?? 0,
+    sleep: input.retrySleep,
+    isRetryable: (err) => err instanceof ExpertOutputSchemaError,
+  });
+
+  const hardLimitHit =
+    data.coverage_complete !== true ||
+    data.candidate_findings.length >= input.maxCandidateFindingsPerAgentPerShard;
+
+  return { output: data, hardLimitHit };
 }

@@ -927,6 +927,8 @@ jobs:
 
 ## 附加组件：一键部署 CLI（`deploy` 命令）
 
+> **状态：已完成（2026-07-23）。** Task C.1-C.8 全部落地在 `cli/`，TDD 流程 + 端到端 smoke test（stub `gh`/`git`，验证生成的 workflow/config 文件内容、分支+PR 流程、secret 通过 stdin 传递不落地）。Phase 4（required check）已与您确认跳过——机器人本身没有 merge 权限、不调用 merge API，是否设为合并门禁完全是可选、逐仓库的后续步骤。
+
 **这不是设计文档原有条款，是您在实施过程中新提出的需求**：在目标仓库根目录跑一条终端命令、填入 DeepSeek API key，即完成部署。以下是把这个需求转成的具体任务；因为它只是往目标仓库写文件/设置 secret 的脚手架工具，不参与审核链路的信任决策，所以**不影响** Phase 0-4 已确认的安全架构，可以独立于四个上线门槛并行推进（建议在 Phase 1 的两份 reusable workflow 文件落地后开始，这样 CLI 一开始就能 pin 住一个真实存在的 commit SHA）。
 
 **命令形态**（不发布到 npm registry，直接用 `npx github:` 语法引用中央仓库自身，延续"pin 住 commit SHA"的一贯做法）：

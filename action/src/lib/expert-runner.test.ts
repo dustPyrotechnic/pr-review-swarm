@@ -124,6 +124,14 @@ describe('runExpert', () => {
     expect(client.sendStructuredRequest).toHaveBeenCalledTimes(3); // initial + 2 retries
   });
 
+  it('includes the actually-observed offending value in the error, so job logs show what the model really returned', async () => {
+    const client = {
+      sendStructuredRequest: vi.fn().mockResolvedValue({ ...makeValidExpertOutput(1, true), coverage_complete: 'true' }),
+    };
+
+    await expect(runExpert({ ...baseInput, client })).rejects.toThrow(/coverage_complete.*"true"|"true".*coverage_complete/);
+  });
+
   it('does not retry a network/transport error — only schema-validation failures are retried here', async () => {
     const client = {
       sendStructuredRequest: vi.fn().mockRejectedValue(new Error('network boom')),

@@ -37152,8 +37152,12 @@ async function requestAndValidate(input, systemPrompt, userPrompt) {
     raw
   );
   if (!result.valid) {
+    const rawObj = raw;
+    const observed = rawObj && typeof rawObj === "object" ? Object.fromEntries(
+      Object.entries(rawObj).filter(([key]) => key !== "candidate_findings")
+    ) : raw;
     throw new ExpertOutputSchemaError(
-      `expert-runner: model response failed expert-output schema validation: ${result.errors.join("; ")}`
+      `expert-runner: model response failed expert-output schema validation: ${result.errors.join("; ")} (observed top-level fields: ${JSON.stringify(observed)})`
     );
   }
   return result.data;

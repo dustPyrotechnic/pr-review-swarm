@@ -96,8 +96,20 @@ async function requestAndValidate(
     raw,
   );
   if (!result.valid) {
+    // Diagnostic only: this is the model's own top-level meta-output
+    // (never PR/finding content), so it's safe to include verbatim in the
+    // error/job log — without it, "must be boolean" gives no hint what the
+    // model actually sent instead.
+    const rawObj = raw as Record<string, unknown> | null;
+    const observed =
+      rawObj && typeof rawObj === 'object'
+        ? Object.fromEntries(
+            Object.entries(rawObj).filter(([key]) => key !== 'candidate_findings'),
+          )
+        : raw;
     throw new ExpertOutputSchemaError(
-      `expert-runner: model response failed expert-output schema validation: ${result.errors.join('; ')}`,
+      `expert-runner: model response failed expert-output schema validation: ${result.errors.join('; ')} ` +
+        `(observed top-level fields: ${JSON.stringify(observed)})`,
     );
   }
 

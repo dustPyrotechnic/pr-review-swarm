@@ -18,7 +18,19 @@
 └── .github/workflows/   # reusable workflow
 ```
 
-## 目标仓库如何接入（计划中的用法）
+## 目标仓库如何接入
+
+### 方式一：一键部署 CLI（推荐）
+
+在目标仓库根目录跑一条命令即可（需要已安装并登录 `gh` CLI）：
+
+```bash
+npx github:dustPyrotechnic/pr-review-swarm#master deploy --deepseek-key=sk-xxxx
+```
+
+不传 `--deepseek-key` 时会走交互式遮罩输入，也可用 `DEEPSEEK_API_KEY` 环境变量传入；key 不会出现在任何日志或命令行参数里。默认会新建分支、开一个 PR 供你审阅后合并；加 `--direct-push` 可跳过 PR 直接推送到当前分支。命令会自动：写入两份监听器 workflow、写入默认 `.github/pr-review-swarm.yml`、设置 `DEEPSEEK_API_KEY` secret、检查 Actions 权限是否允许创建 PR。详见 `cli/` 目录，`--help` 可查看完整参数。
+
+### 方式二：手动接入
 
 目标仓库需要安装两个小型监听器 workflow，都固定引用中央仓库某个 commit SHA：一个响应 PR 事件触发常规审核，一个按 schedule 触发 watchdog 清理超时的 Check。
 

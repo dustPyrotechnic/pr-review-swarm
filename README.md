@@ -28,6 +28,17 @@
 npx github:dustPyrotechnic/pr-review-swarm#master deploy --deepseek-key=sk-xxxx
 ```
 
+**本机想要更短的命令**（比如反复部署到多个仓库），可以把 CLI 链接到本机 PATH 里，之后就能直接用 `pr-agent deploy`：
+
+```bash
+git clone https://github.com/dustPyrotechnic/pr-review-swarm.git
+cd pr-review-swarm/cli && npm install && npm link
+# 之后在任意目标仓库根目录：
+pr-agent deploy --deepseek-key=sk-xxxx
+```
+
+`npm link` 只在本机生效，指向的是你本地这份 clone 的代码；中央仓库更新后需要 `git pull` 才能跟上（不像 `npx github:...#tag` 每次都拉取远端最新代码）。
+
 不传 `--deepseek-key` 时会走交互式遮罩输入，也可用 `DEEPSEEK_API_KEY` 环境变量传入；key 不会出现在任何日志或命令行参数里。默认会新建分支、开一个 PR 供你审阅后合并；加 `--direct-push` 可跳过 PR 直接推送到当前分支。命令会自动：写入两份监听器 workflow、写入默认 `.github/pr-review-swarm.yml`、设置 `DEEPSEEK_API_KEY` secret、检查 Actions 权限是否允许创建 PR。详见 `cli/` 目录，`--help` 可查看完整参数。
 
 ### 方式二：手动接入

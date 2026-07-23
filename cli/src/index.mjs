@@ -17,7 +17,8 @@ import { runDeploy } from './lib/run-deploy.mjs';
 const HELP_TEXT = `pr-review-swarm — install the PR Review Swarm review bot into this repo
 
 Usage:
-  npx github:dustPyrotechnic/pr-review-swarm#<tag> deploy [options]
+  pr-agent deploy [options]
+  npx github:dustPyrotechnic/pr-review-swarm#<tag> deploy [options]   (without a local link)
 
 Options:
   --deepseek-key=<key>   DeepSeek API key (else reads DEEPSEEK_API_KEY env var, else prompts)

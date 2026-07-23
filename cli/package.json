@@ -4,7 +4,8 @@
   "type": "module",
   "version": "0.1.0",
   "bin": {
-    "pr-review-swarm": "src/index.mjs"
+    "pr-review-swarm": "src/index.mjs",
+    "pr-agent": "src/index.mjs"
   },
   "engines": {
     "node": ">=20"

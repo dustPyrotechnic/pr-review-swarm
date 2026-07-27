@@ -36636,7 +36636,8 @@ var init_sharding = __esm({
 var prepare_exports = {};
 __export(prepare_exports, {
   buildPrepareArtifact: () => buildPrepareArtifact,
-  run: () => run3
+  run: () => run3,
+  writePrepareArtifactToFile: () => writePrepareArtifactToFile
 });
 function buildPrepareArtifact(input) {
   const paginationResult = checkPaginationGuard(input.files, input.limits.maxPrFilesPerPage);
@@ -36725,6 +36726,9 @@ function buildPrepareArtifact(input) {
   };
   return { incomplete, artifact };
 }
+function writePrepareArtifactToFile(artifact, filePath) {
+  (0, import_node_fs.writeFileSync)(filePath, JSON.stringify(artifact));
+}
 async function fetchFullFileContent(octokit, owner, repo, path5, ref) {
   const content = await fetchFileContent(octokit, { owner, repo, path: path5, ref });
   return content ?? "";
@@ -36738,6 +36742,7 @@ async function run3() {
   }
   const expectedIdentityTupleRaw = core4.getInput("identity_tuple", { required: true });
   const expectedIdentityTuple = JSON.parse(expectedIdentityTupleRaw);
+  const artifactPath = core4.getInput("prepare_artifact_path", { required: true });
   const octokit = getOctokitFromInput();
   const owner = import_github4.context.repo.owner;
   const repo = import_github4.context.repo.repo;
@@ -36812,16 +36817,17 @@ async function run3() {
       maxShards: central_limits_default.maxShardsPerRun
     }
   });
+  writePrepareArtifactToFile(artifact, artifactPath);
   core4.setOutput("stale", "false");
   core4.setOutput("incomplete", String(incomplete));
-  core4.setOutput("prepare_artifact", JSON.stringify(artifact));
 }
-var core4, import_github4;
+var core4, import_github4, import_node_fs;
 var init_prepare = __esm({
   "src/entrypoints/prepare.ts"() {
     "use strict";
     core4 = __toESM(require_core(), 1);
     import_github4 = __toESM(require_github(), 1);
+    import_node_fs = require("node:fs");
     init_central_limits();
     init_identity_tuple();
     init_repo_config();
@@ -36977,7 +36983,7 @@ function skillsDir() {
   return import_node_path3.default.join(dir, levels, "skills");
 }
 function readIndexMd() {
-  return (0, import_node_fs.readFileSync)(import_node_path3.default.join(skillsDir(), "index.md"), "utf-8");
+  return (0, import_node_fs2.readFileSync)(import_node_path3.default.join(skillsDir(), "index.md"), "utf-8");
 }
 function parseIndex(indexMd) {
   const entries = [];
@@ -37001,7 +37007,7 @@ function parseIndex(indexMd) {
 }
 function loadSkill(name) {
   const filePath = import_node_path3.default.join(skillsDir(), `${name}.md`);
-  const raw = (0, import_node_fs.readFileSync)(filePath, "utf-8");
+  const raw = (0, import_node_fs2.readFileSync)(filePath, "utf-8");
   const match2 = FRONT_MATTER_RE.exec(raw);
   if (!match2) {
     throw new Error(`skill-loader: ${name}.md is missing YAML front matter`);
@@ -37031,11 +37037,11 @@ function validateSkillRequests(requested, indexSkills, maxN) {
   }
   return requested;
 }
-var import_node_fs, import_node_url, import_node_path3, import_meta, INDEX_LINE_RE, FRONT_MATTER_RE;
+var import_node_fs2, import_node_url, import_node_path3, import_meta, INDEX_LINE_RE, FRONT_MATTER_RE;
 var init_skill_loader = __esm({
   "src/lib/skill-loader.ts"() {
     "use strict";
-    import_node_fs = require("node:fs");
+    import_node_fs2 = require("node:fs");
     import_node_url = require("node:url");
     import_node_path3 = __toESM(require("node:path"), 1);
     init_js_yaml();
@@ -37379,9 +37385,13 @@ var init_arbiter = __esm({
 // src/entrypoints/analyze.ts
 var analyze_exports = {};
 __export(analyze_exports, {
+  readPrepareArtifactFromFile: () => readPrepareArtifactFromFile,
   run: () => run4,
   runAnalysis: () => runAnalysis
 });
+function readPrepareArtifactFromFile(filePath) {
+  return JSON.parse((0, import_node_fs3.readFileSync)(filePath, "utf-8"));
+}
 function agentCategory(agentName) {
   return agentName.replace("generic-", "");
 }
@@ -37581,9 +37591,9 @@ async function runAnalysis(input) {
   };
 }
 async function run4() {
-  const prepareArtifactRaw = core5.getInput("prepare_artifact", { required: true });
-  const prepareArtifact = JSON.parse(prepareArtifactRaw);
+  const prepareArtifactPath = core5.getInput("prepare_artifact_path", { required: true });
   const model = core5.getInput("model", { required: true });
+  const prepareArtifact = readPrepareArtifactFromFile(prepareArtifactPath);
   assertModelAllowed(model);
   const skillIndexMd = readIndexMd();
   const apiKey = process.env.DEEPSEEK_API_KEY;
@@ -37613,10 +37623,11 @@ async function run4() {
   core5.setOutput("coverage_manifest", JSON.stringify(result.coverageManifest));
   core5.setOutput("internal_diagnostics", JSON.stringify(result.internalDiagnostics));
 }
-var core5, AGENT_NAMES;
+var import_node_fs3, core5, AGENT_NAMES;
 var init_analyze = __esm({
   "src/entrypoints/analyze.ts"() {
     "use strict";
+    import_node_fs3 = require("node:fs");
     core5 = __toESM(require_core(), 1);
     init_central_limits();
     init_model_allowlist();

@@ -19,8 +19,8 @@ inputs:
   identity_tuple:
     description: 'JSON-encoded IdentityTuple locked by status-start. Required by prepare and publish.'
     required: false
-  prepare_artifact:
-    description: 'JSON-encoded PrepareArtifact produced by prepare. Required by analyze.'
+  prepare_artifact_path:
+    description: 'Filesystem path to the JSON-encoded PrepareArtifact. Required (as a write target) by prepare and (as a read source) by analyze.'
     required: false
   model:
     description: 'Allow-listed DeepSeek model name. Required by analyze.'
@@ -54,8 +54,6 @@ outputs:
     description: 'prepare output: "true"/"false"'
   incomplete:
     description: 'prepare output: "true"/"false"'
-  prepare_artifact:
-    description: 'prepare output: JSON-encoded PrepareArtifact'
   hard_limit_hit:
     description: 'analyze output: "true"/"false"'
   any_required_stage_failed:
@@ -67,5 +65,5 @@ outputs:
   verdict:
     description: 'publish output: JSON-encoded VerdictSummary'
 runs:
-  using: 'node20'
+  using: 'node24'
   main: 'dist/index.js'

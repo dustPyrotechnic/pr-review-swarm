@@ -5,7 +5,7 @@ import {
   loadWorkflow,
   permissionMap,
   type Job,
-} from './load-workflows';
+} from './load-workflows.js';
 
 const REVIEW = 'reusable-pr-review.yml';
 const CALLER = 'pr-review-caller.yml';

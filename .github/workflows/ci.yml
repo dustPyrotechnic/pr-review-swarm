@@ -110,11 +110,18 @@ jobs:
 
   forbidden-pr-head-ref-scan:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: action
     steps:
       - uses: actions/checkout@v4
-      - name: Reject PR head ref checkouts
-        run: |
-          if grep -RnE 'ref:\s*.*github\.event\.pull_request\.head' .github/workflows; then
-            echo "::error::检测到疑似 checkout PR head 的 ref，禁止合并"
-            exit 1
-          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      # Replaces the previous single `grep -E 'ref:.*github\.event\.pull_request\.head'`,
+      # which was bypassable by github.head_ref, format()/fromJSON() wrapping, routing
+      # through env:, splitting ref: across lines, YAML anchors, and `gh pr checkout`
+      # in a run: script. See action/src/lib/workflow-ref-scanner.ts.
+      - name: Reject PR head ref checkouts (含绕过变体)
+        run: npx vitest run test/workflows/no-pr-head-checkout.test.ts

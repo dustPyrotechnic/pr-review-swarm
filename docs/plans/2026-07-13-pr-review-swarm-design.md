@@ -3,6 +3,12 @@
 日期：2026-07-13（修订：2026-07-17）
 状态：已确认，待实现验证
 
+> **修订（2026-07-27）：机器人不再提交 APPROVE。** 本文档原先描述的"零 finding 时提交 APPROVE"行为已移除，
+> pass verdict 只提交 `COMMENT`（附带 `default_mention`），合并确认始终由人工完成。详见
+> `action/test/integration/CHECKLIST.md` 顶部修订说明。唯一保留 APPROVE 语义的地方是 watchdog 回填：识别
+> 历史/人工产生的 APPROVED Review，用于把孤儿 Check 回填为 success。本文档的一致性由
+> `action/test/docs-consistency.test.ts` 锁定。
+
 ## 目录
 
 - [目标与定位](#目标与定位)
@@ -20,7 +26,7 @@
 
 ## 目标与定位
 
-构建一个供仓库所有者使用的 GitHub PR 审核机器人：多个专家 Agent 并行完成整次 PR 审核，统一验证和汇总全部有效问题后，一次性向 PR 提出者反馈。只要存在任一经验证的问题，就提交 `REQUEST_CHANGES`；仅在审核完整且问题数为零时提交 `APPROVE`，并在固定摘要评论中 @ 配置指定的负责人（默认 `dustPyrotechnic`，仓库可覆盖）。
+构建一个供仓库所有者使用的 GitHub PR 审核机器人：多个专家 Agent 并行完成整次 PR 审核，统一验证和汇总全部有效问题后，一次性向 PR 提出者反馈。只要存在任一经验证的问题，就提交 `REQUEST_CHANGES`；审核完整且问题数为零时只提交 `COMMENT`（机器人永不提交 APPROVE，合并确认始终由人工完成），并在固定摘要评论中 @ 配置指定的负责人（默认 `dustPyrotechnic`，仓库可覆盖）。
 
 机器人只负责审核，不执行合并，也不申请 `contents: write` 等合并所需权限。最终是否采纳反馈、是否使用 ruleset bypass、以及是否合并，始终由人决定。目标仓库的 ruleset 应允许仓库所有者或指定维护者在必要时人工 bypass。
 
@@ -199,8 +205,8 @@ publish 重新获取的"可信 diff/内容"直接来自 GitHub REST API 的 `GET
 
 批量策略：
 
-- 若单次 Review 或正文容量足以容纳全部问题，直接提交一次最终 Review（`REQUEST_CHANGES` 或 `APPROVE`）。
-- 若容量不足，前 `batch_count - 1` 批使用 `event: COMMENT` 提交（承载 inline comments 和部分 findings，不改变 PR 审核状态），只有最后一批成功后才提交唯一一次 `REQUEST_CHANGES`（或在零 finding 完整审核下提交 `APPROVE`）。
+- 若单次 Review 或正文容量足以容纳全部问题，直接提交一次最终 Review（`REQUEST_CHANGES`，或零 finding 完整审核下的 `COMMENT`）。
+- 若容量不足，前 `batch_count - 1` 批使用 `event: COMMENT` 提交（承载 inline comments 和部分 findings，不改变 PR 审核状态），只有最后一批成功后才提交唯一一次最终 `REQUEST_CHANGES`（零 finding 完整审核下最终批次同样是 `COMMENT`，机器人不提交 APPROVE）。
 - 重试时按 `review_set_id` + `batch_index` 逐批对账：查询已存在的、`review_set_id` 匹配的 Review 对象，并核对该批次的 `findings_digest` 与本次待发布内容是否一致——一致才算"已成功发布"予以跳过，不一致（理论上不应发生，因为 `review_set_id` 已经绑定 findings 内容）则判定为 `incomplete` 并停止发布，不静默覆盖或跳过。由于 `review_set_id` 已经把 findings 内容纳入派生输入，"同一身份元组重跑产出不同 findings 集合"会天然得到不同的 `review_set_id`、走全新批次序列重新完整发布，不会因命中旧 Review 对象而漏发新增问题。
 - 只有最后一批成功并完成对账后，才允许 status-finalize 写入最终 Check Run 结论。
 
@@ -208,7 +214,7 @@ Review 对象没有自定义字段，`review_set_id`/`batch_index`/`batch_count`
 
 **同一 `head_sha` 上出现多个 `review_set_id`（跨轮次重跑）时的处理**：publish 开始发布前，先用上述隐藏 marker 解析出当前 `head_sha` 上是否存在其它 `review_set_id` 遗留的 Review。若存在且不是本次要发布的 `review_set_id`：
 
-- 若旧 `review_set_id` 已经提交过最终批次（`REQUEST_CHANGES`/`APPROVE`），视为被新一轮取代，publish 优先调用 `PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/dismissals` 附带说明"已被新一轮审核（`review_set_id=...`）取代"予以撤销。**该 API 在仓库启用了"限制谁可以 dismiss review"这类分支保护规则时可能拒绝普通 `GITHUB_TOKEN` 身份（403）**：命中该情况不判定为失败，改为降级路径——跳过 dismiss，直接对旧 Review 本身调用 `PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}`（Update a review，只要求调用者是该 Review 的作者，不需要 dismiss 权限）在正文最前面插入"⚠️ 已被新一轮审核（`review_set_id=...`）取代，请以下方最新 Review 为准"的说明。旧 Review 下的 inline comment 无论走哪条路径，都通过 `PATCH /repos/{owner}/{repo}/pulls/comments/{comment_id}` 在正文前追加同样的取代说明，不删除评论本身，保留审计痕迹。
+- 若旧 `review_set_id` 已经提交过最终批次（`REQUEST_CHANGES`，或历史遗留的 `APPROVE`——机器人已不再产出它，但更早版本留下的 Review 仍需被取代），视为被新一轮取代，publish 优先调用 `PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/dismissals` 附带说明"已被新一轮审核（`review_set_id=...`）取代"予以撤销。**该 API 在仓库启用了"限制谁可以 dismiss review"这类分支保护规则时可能拒绝普通 `GITHUB_TOKEN` 身份（403）**：命中该情况不判定为失败，改为降级路径——跳过 dismiss，直接对旧 Review 本身调用 `PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}`（Update a review，只要求调用者是该 Review 的作者，不需要 dismiss 权限）在正文最前面插入"⚠️ 已被新一轮审核（`review_set_id=...`）取代，请以下方最新 Review 为准"的说明。旧 Review 下的 inline comment 无论走哪条路径，都通过 `PATCH /repos/{owner}/{repo}/pulls/comments/{comment_id}` 在正文前追加同样的取代说明，不删除评论本身，保留审计痕迹。
 - 若旧 `review_set_id` 只有若干成功的中间 `COMMENT` 批次、从未提交最终批次（上一轮中途失败或被取消），同样对这些中间批次的 Review body 追加取代说明，视为已处理，不再等待其继续完成。
 - 处理完旧 `review_set_id` 的收尾后，本次运行才开始按新 `review_set_id` 从 `batch_index=0` 发布，确保同一 `head_sha` 上不会同时存在多份互相矛盾、且未加说明的 `REQUEST_CHANGES`。
 
@@ -216,7 +222,7 @@ inline comment 发布前必须确认 `path`、`line`、`side` 和可选起始位
 
 GitHub 对象分工：
 
-- **Review**：承载 `REQUEST_CHANGES`、`APPROVE`、`COMMENT`（分批中间态）和 inline comments。
+- **Review**：承载 `REQUEST_CHANGES`、`COMMENT`（分批中间态与零 finding 的最终态）和 inline comments；机器人不产出 `APPROVE`。
 - **固定摘要评论**：通过 Issue Comments API 创建和更新，展示 verdict、覆盖率、完整问题索引、失败原因和重试方式。
 - **Check Run**：作为权威门禁和机器可读状态，不使用旧 Commit Status context。
 
@@ -227,7 +233,7 @@ GitHub 对象分工：
 
 Review 本身的幂等键使用 `review_set_id`（见上文批量发布 manifest），规则、模型或引擎变更后 `review_set_id` 随之变化，从而允许对同一 head SHA 重新审核而不与旧 Review 冲突。提交 Review 后若摘要或 Check 更新失败，重试必须从 GitHub 重新读取现状并按 `review_set_id`/`batch_index` 继续对账，不能重复提交相同批次的 Review。
 
-`APPROVE` 只更新固定发布身份自己的审核状态；Code Owner、批准数量和其他 branch protection 条件仍独立生效。机器人永远不调用 merge API。
+机器人提交的 Review 只更新固定发布身份自己的审核状态，且永不提交 `APPROVE`——它不贡献任何 branch protection 意义上的批准；Code Owner、批准数量和其他 branch protection 条件完全由人工满足。机器人永远不调用 merge API。
 
 ## Check Run 状态机
 
@@ -295,9 +301,9 @@ Check Run 的 `external_id` 包含 repo、PR、身份元组、run ID 和 attempt
 - 验证 custom action 源码、`dist/`、schemas 和 skills 的版本绑定，运行阶段不安装依赖。
 - 覆盖重命名、删除、二进制、生成文件、超大 diff、跨文件影响和部分 API 失败。
 - 验证审核期间没有任何 PR 评论；全部审核结束后才统一发布。
-- 验证任一最终 finding 都产生 `REQUEST_CHANGES`，只有零 finding 的完整审核才产生 `APPROVE`。
+- 验证任一最终 finding 都产生 `REQUEST_CHANGES`，零 finding 的完整审核只产生 `COMMENT`；任何情况下都不产生 `APPROVE`。
 - 验证 verifier 失败会产生 `incomplete`，已验证问题会被反馈，未验证候选不会被发布。
-- 验证 `REQUEST_CHANGES → 新 commit → APPROVE` 完整生命周期。
+- 验证 `REQUEST_CHANGES → 新 commit → COMMENT`（不是 APPROVE）完整生命周期。
 - 验证旧身份元组（含旧 `head_sha`、旧 `base_ref`）的延迟结果不会覆盖新结果。
 - 验证 PR 关闭、转为草稿或身份元组变化（含仅更换 base branch、head_sha 不变的情况）时不发布 Review/摘要，并把 Check 终结为 `cancelled`。
 - 验证 `success`、`failure`、`action_required`、`timed_out` 和 `cancelled` Check Run 状态及后继运行对账，包括 prepare/analyze 阶段硬失败时 status-finalize 依然能将 Check 写入终态；验证工作流在 status-finalize 被调度前即被取消的场景下，运行在目标仓库自身、仅持有该仓库权限的 watchdog Job 能在超时阈值后将遗留的 `in_progress` Check 强制终结，不依赖后续 PR 事件、也不需要任何跨仓库凭据。
@@ -321,7 +327,7 @@ Check Run 的 `external_id` 包含 repo、PR、身份元组、run ID 和 attempt
 
 1. 先以只读 shadow mode 运行，不发布 Review，与人工审核结果对比。
 2. 达到预设的问题召回率和误报上限后，启用 comment-only 模式，验证批量反馈质量。
-3. 评论模式稳定后启用 `REQUEST_CHANGES`/`APPROVE`，但暂不把 Check Run 设为 required。
+3. 评论模式稳定后启用真实的 `REQUEST_CHANGES`（零 finding 仍只发 `COMMENT`，不提交 APPROVE），但暂不把 Check Run 设为 required。
 4. 最后将 `PR Review Swarm / verdict` 配置为 required check，同时确认仓库所有者保留人工 bypass 能力。
 
 ## 实现前置任务

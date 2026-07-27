@@ -43,7 +43,7 @@
 用 gh CLI 在沙盒仓库（本仓库自身，reusable workflow 按 dogfood 模式指向自身 pinned commit）开两个真实测试 PR：
 
 - **PR #6**（`scripts/sandbox-test-lookup-user.mjs`，故意写入 SQL 注入 bug）：真实跑出 `verdict=incomplete`（因 `any_required_stage_failed`，见下方已知问题）但 `final_findings_count=2`（含一条 critical SQL injection），`final_review_event=REQUEST_CHANGES`，Review 状态确认为 `CHANGES_REQUESTED`，Review body 与摘要评论顶部均正确出现"⚠️ 本次审核未完整覆盖"横幅。**验证了 REQUEST_CHANGES 分支、incomplete 横幅、批次 marker、inline comment 全链路在真实 GitHub 环境下工作正常。**
-- **PR #5**（纯文档新增，无 bug）：两次运行都命中 `any_required_stage_failed`（`final_findings_count=0` → `final_review_event=none`），只发了摘要评论、没有提交 Review，符合 Task 3.1 "incomplete+零 finding 只更新摘要" 的设计。**没能在沙盒里实测到 pass→APPROVE+mention 分支**，因为触发了下方"已知问题"。该分支已由 `publish.test.ts`/`summary-comment.test.ts` 的单测充分覆盖（含 mention 断言）。
+- **PR #5**（纯文档新增，无 bug）：两次运行都命中 `any_required_stage_failed`（`final_findings_count=0` → `final_review_event=none`），只发了摘要评论、没有提交 Review，符合 Task 3.1 "incomplete+零 finding 只更新摘要" 的设计。**没能在沙盒里实测到 pass 分支（COMMENT + mention）**，因为触发了下方"已知问题"。该分支已由 `publish.test.ts`/`summary-comment.test.ts` 的单测充分覆盖（含 mention 断言）。（本行原先描述的 pass 分支终态是 2026-07-23 已移除的那个行为，2026-07-27 随 `docs-consistency.test.ts` 落地一并修正为 COMMENT。）
 
 ### 已知问题：已排查并修复（2026-07-23）
 

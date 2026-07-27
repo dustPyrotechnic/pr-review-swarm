@@ -34140,7 +34140,7 @@ var init_schema_validator = __esm({
 async function fetchFileContent(octokit, params) {
   try {
     const { data } = await octokit.rest.repos.getContent(params);
-    if (Array.isArray(data) || data.type !== "file" || typeof data.content !== "string") {
+    if (Array.isArray(data) || data.type !== "file" || data.encoding === "none" || typeof data.content !== "string") {
       return void 0;
     }
     return Buffer.from(data.content, data.encoding ?? "base64").toString("utf-8");

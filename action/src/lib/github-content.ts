@@ -9,7 +9,12 @@ export async function fetchFileContent(
 ): Promise<string | undefined> {
   try {
     const { data } = await octokit.rest.repos.getContent(params);
-    if (Array.isArray(data) || data.type !== 'file' || typeof data.content !== 'string') {
+    if (
+      Array.isArray(data) ||
+      data.type !== 'file' ||
+      data.encoding === 'none' ||
+      typeof data.content !== 'string'
+    ) {
       return undefined;
     }
     return Buffer.from(data.content, (data.encoding as BufferEncoding) ?? 'base64').toString('utf-8');

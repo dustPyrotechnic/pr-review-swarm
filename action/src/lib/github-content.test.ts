@@ -66,6 +66,25 @@ describe('fetchFileContent', () => {
     expect(result).toBeUndefined();
   });
 
+  it('returns undefined when the file is too large for inline content (encoding: "none")', async () => {
+    const octokit = {
+      rest: {
+        repos: {
+          getContent: vi.fn().mockResolvedValue({ data: { type: 'file', encoding: 'none', content: '' } }),
+        },
+      },
+    };
+
+    const result = await fetchFileContent(octokit as never, {
+      owner: 'octo',
+      repo: 'repo',
+      path: 'big-file.bin',
+      ref: 'sha123',
+    });
+
+    expect(result).toBeUndefined();
+  });
+
   it('returns undefined when the file does not exist (404)', async () => {
     const notFound = Object.assign(new Error('Not Found'), { status: 404 });
     const octokit = { rest: { repos: { getContent: vi.fn().mockRejectedValue(notFound) } } };

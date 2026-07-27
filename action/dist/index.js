@@ -37387,10 +37387,14 @@ var analyze_exports = {};
 __export(analyze_exports, {
   readPrepareArtifactFromFile: () => readPrepareArtifactFromFile,
   run: () => run4,
-  runAnalysis: () => runAnalysis
+  runAnalysis: () => runAnalysis,
+  writeAnalyzeArtifactToFile: () => writeAnalyzeArtifactToFile
 });
 function readPrepareArtifactFromFile(filePath) {
   return JSON.parse((0, import_node_fs3.readFileSync)(filePath, "utf-8"));
+}
+function writeAnalyzeArtifactToFile(artifact, filePath) {
+  (0, import_node_fs3.writeFileSync)(filePath, JSON.stringify(artifact));
 }
 function agentCategory(agentName) {
   return agentName.replace("generic-", "");
@@ -37617,10 +37621,10 @@ async function run4() {
   if (result.stageFailureReason) {
     core5.warning(`analyze: any_required_stage_failed \u2014 ${result.stageFailureReason}`);
   }
+  const analyzeArtifactPath = core5.getInput("analyze_artifact_path", { required: true });
+  writeAnalyzeArtifactToFile({ findings: result.findings, coverage_manifest: result.coverageManifest }, analyzeArtifactPath);
   core5.setOutput("hard_limit_hit", String(result.hardLimitHit));
   core5.setOutput("any_required_stage_failed", String(result.anyRequiredStageFailed));
-  core5.setOutput("findings", JSON.stringify(result.findings));
-  core5.setOutput("coverage_manifest", JSON.stringify(result.coverageManifest));
   core5.setOutput("internal_diagnostics", JSON.stringify(result.internalDiagnostics));
 }
 var import_node_fs3, core5, AGENT_NAMES;
@@ -37903,9 +37907,15 @@ var publish_exports = {};
 __export(publish_exports, {
   buildPublishResult: () => buildPublishResult,
   executePublish: () => executePublish,
+  readAnalyzeArtifactFromFile: () => readAnalyzeArtifactFromFile,
   resolveEngineRevision: () => resolveEngineRevision,
   run: () => run5
 });
+function readAnalyzeArtifactFromFile(filePath) {
+  if (!(0, import_node_fs4.existsSync)(filePath))
+    return void 0;
+  return JSON.parse((0, import_node_fs4.readFileSync)(filePath, "utf-8"));
+}
 function buildMarkdownSummary(verdictSummary, findings) {
   const lines = ["# PR Review Swarm", ""];
   if (verdictSummary.verdict === "incomplete" && verdictSummary.incomplete_reasons?.length) {
@@ -38191,10 +38201,10 @@ async function run5() {
     core6.setOutput("verdict", JSON.stringify(staleSummary));
     return;
   }
-  const findingsRaw = core6.getInput("findings");
-  const findings = findingsRaw ? JSON.parse(findingsRaw) : [];
-  const coverageManifestRaw = core6.getInput("coverage_manifest");
-  const coverageManifest = coverageManifestRaw ? JSON.parse(coverageManifestRaw) : {
+  const analyzeArtifactPath = core6.getInput("analyze_artifact_path");
+  const analyzeArtifact = analyzeArtifactPath ? readAnalyzeArtifactFromFile(analyzeArtifactPath) : void 0;
+  const findings = analyzeArtifact?.findings ?? [];
+  const coverageManifest = analyzeArtifact?.coverage_manifest ?? {
     files: [],
     shards_complete: false,
     hard_limit_hit: true,
@@ -38229,11 +38239,12 @@ async function run5() {
   await core6.summary.addRaw(result.markdownSummary).write();
   core6.setOutput("verdict", JSON.stringify(result.verdictSummary));
 }
-var import_node_crypto2, core6, import_github5;
+var import_node_crypto2, import_node_fs4, core6, import_github5;
 var init_publish = __esm({
   "src/entrypoints/publish.ts"() {
     "use strict";
     import_node_crypto2 = require("node:crypto");
+    import_node_fs4 = require("node:fs");
     core6 = __toESM(require_core(), 1);
     import_github5 = __toESM(require_github(), 1);
     init_central_limits();

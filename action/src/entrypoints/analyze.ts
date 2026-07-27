@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import * as core from '@actions/core';
 import centralLimits from '../../config/central-limits.json' with { type: 'json' };
 import { assertModelAllowed } from '../lib/model-allowlist.js';
@@ -25,6 +25,15 @@ import type { PrepareArtifact, PrepareShard, CoverageManifest } from './prepare.
 
 export function readPrepareArtifactFromFile(filePath: string): PrepareArtifact {
   return JSON.parse(readFileSync(filePath, 'utf-8')) as PrepareArtifact;
+}
+
+export interface AnalyzeArtifact {
+  findings: Finding[];
+  coverage_manifest: CoverageManifest;
+}
+
+export function writeAnalyzeArtifactToFile(artifact: AnalyzeArtifact, filePath: string): void {
+  writeFileSync(filePath, JSON.stringify(artifact));
 }
 
 const AGENT_NAMES = ['generic-correctness', 'generic-security', 'generic-maintainability'] as const;
@@ -336,9 +345,10 @@ export async function run(): Promise<void> {
     core.warning(`analyze: any_required_stage_failed — ${result.stageFailureReason}`);
   }
 
+  const analyzeArtifactPath = core.getInput('analyze_artifact_path', { required: true });
+  writeAnalyzeArtifactToFile({ findings: result.findings, coverage_manifest: result.coverageManifest }, analyzeArtifactPath);
+
   core.setOutput('hard_limit_hit', String(result.hardLimitHit));
   core.setOutput('any_required_stage_failed', String(result.anyRequiredStageFailed));
-  core.setOutput('findings', JSON.stringify(result.findings));
-  core.setOutput('coverage_manifest', JSON.stringify(result.coverageManifest));
   core.setOutput('internal_diagnostics', JSON.stringify(result.internalDiagnostics));
 }

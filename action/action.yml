@@ -25,11 +25,8 @@ inputs:
   model:
     description: 'Allow-listed DeepSeek model name. Required by analyze.'
     required: false
-  findings:
-    description: 'JSON-encoded Finding[] produced by analyze. Required by publish.'
-    required: false
-  coverage_manifest:
-    description: 'JSON-encoded CoverageManifest produced by analyze. Required by publish.'
+  analyze_artifact_path:
+    description: 'Filesystem path to the JSON-encoded {findings, coverage_manifest}. Required (as a write target) by analyze and (as a read source) by publish.'
     required: false
   any_required_stage_failed:
     description: '"true"/"false" output from analyze. Required by publish.'
@@ -58,10 +55,6 @@ outputs:
     description: 'analyze output: "true"/"false"'
   any_required_stage_failed:
     description: 'analyze output: "true"/"false"'
-  findings:
-    description: 'analyze output: JSON-encoded Finding[]'
-  coverage_manifest:
-    description: 'analyze output: JSON-encoded CoverageManifest'
   verdict:
     description: 'publish output: JSON-encoded VerdictSummary'
 runs:

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import * as core from '@actions/core';
 import { context, getOctokit } from '@actions/github';
 import centralLimits from '../../config/central-limits.json' with { type: 'json' };
@@ -28,6 +29,21 @@ import type { Finding } from '../lib/arbiter.js';
 import type { CoverageManifest } from './prepare.js';
 
 type Octokit = ReturnType<typeof getOctokit>;
+
+export interface AnalyzeArtifact {
+  findings: Finding[];
+  coverage_manifest: CoverageManifest;
+}
+
+// analyze is skipped entirely (never writes this file) when prepare detects
+// a stale identity tuple — that's not an error, so this returns undefined
+// rather than throwing, letting run() fall back to the same "nothing
+// verified" defaults it already used when the findings/coverage_manifest
+// inputs were simply empty strings.
+export function readAnalyzeArtifactFromFile(filePath: string): AnalyzeArtifact | undefined {
+  if (!existsSync(filePath)) return undefined;
+  return JSON.parse(readFileSync(filePath, 'utf-8')) as AnalyzeArtifact;
+}
 
 export interface VerdictSummary {
   identity_tuple: SchemaIdentityTuple;
@@ -464,26 +480,24 @@ export async function run(): Promise<void> {
     return;
   }
 
-  const findingsRaw = core.getInput('findings');
-  const findings = (findingsRaw ? JSON.parse(findingsRaw) : []) as Finding[];
-
-  // coverage_manifest is intentionally NOT required here: when prepare detects
-  // a stale identity tuple, analyze never runs and never produces one. In that
-  // case executePublish's own identity-tuple comparison (above) already
-  // short-circuits to stale_cancelled before this value is ever inspected. If
-  // it's missing for any *other* reason, this conservative "nothing verified"
-  // shape makes computeVerdict fall through to incomplete rather than pass.
-  const coverageManifestRaw = core.getInput('coverage_manifest');
-  const coverageManifest = coverageManifestRaw
-    ? (JSON.parse(coverageManifestRaw) as CoverageManifest)
-    : {
-        files: [],
-        shards_complete: false,
-        hard_limit_hit: true,
-        pulls_files_pagination_truncated: false,
-        missing_patch_files: [],
-        token_usage: { prompt_tokens: 0, completion_tokens: 0 },
-      };
+  // analyze_artifact_path is intentionally NOT required here: when prepare
+  // detects a stale identity tuple, analyze never runs and never writes this
+  // file. In that case executePublish's own identity-tuple comparison
+  // (above) already short-circuits to stale_cancelled before these values
+  // are ever inspected. If it's missing for any *other* reason, this
+  // conservative "nothing verified" shape makes computeVerdict fall through
+  // to incomplete rather than pass.
+  const analyzeArtifactPath = core.getInput('analyze_artifact_path');
+  const analyzeArtifact = analyzeArtifactPath ? readAnalyzeArtifactFromFile(analyzeArtifactPath) : undefined;
+  const findings = analyzeArtifact?.findings ?? [];
+  const coverageManifest = analyzeArtifact?.coverage_manifest ?? {
+    files: [],
+    shards_complete: false,
+    hard_limit_hit: true,
+    pulls_files_pagination_truncated: false,
+    missing_patch_files: [],
+    token_usage: { prompt_tokens: 0, completion_tokens: 0 },
+  };
   const anyRequiredStageFailed = core.getInput('any_required_stage_failed') === 'true';
   const model = core.getInput('model') || 'unknown-model';
 

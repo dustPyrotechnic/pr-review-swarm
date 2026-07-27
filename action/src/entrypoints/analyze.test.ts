@@ -3,10 +3,11 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { runAnalysis, readPrepareArtifactFromFile } from './analyze.js';
+import { runAnalysis, readPrepareArtifactFromFile, writeAnalyzeArtifactToFile } from './analyze.js';
 import { validate } from '../lib/schema-validator.js';
 import type { PrepareArtifact } from './prepare.js';
 import type { LoadedSkill } from '../lib/skill-loader.js';
+import type { Finding } from '../lib/arbiter.js';
 
 const identityTuple = {
   head_repo: 'octo/head-repo',
@@ -472,6 +473,43 @@ describe('readPrepareArtifactFromFile', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('writeAnalyzeArtifactToFile', () => {
+  it('writes findings and coverage_manifest as JSON to the given path, byte-for-byte round-trippable', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'analyze-artifact-'));
+    const filePath = path.join(dir, 'analyze-artifact.json');
+    const artifact = {
+      findings: [
+        {
+          path: 'src/foo.ts',
+          line: 1,
+          side: 'RIGHT',
+          severity: 'high',
+          title: 'Example finding',
+          evidence: 'evidence text',
+          suggestion: 'suggestion text',
+          evidence_validation: { status: 'passed' },
+          verifier_conclusion: { status: 'confirmed' },
+        },
+      ] as unknown as Finding[],
+      coverage_manifest: {
+        files: [],
+        shards_complete: true,
+        hard_limit_hit: false,
+        pulls_files_pagination_truncated: false,
+        missing_patch_files: [],
+        token_usage: { prompt_tokens: 10, completion_tokens: 20 },
+      },
+    };
+
+    writeAnalyzeArtifactToFile(artifact, filePath);
+
+    const written = JSON.parse(readFileSync(filePath, 'utf-8'));
+    expect(written).toEqual(artifact);
+
+    rmSync(dir, { recursive: true, force: true });
   });
 });
 

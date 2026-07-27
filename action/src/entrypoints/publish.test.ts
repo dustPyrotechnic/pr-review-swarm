@@ -1,8 +1,14 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { buildPublishResult, executePublish, resolveEngineRevision } from './publish.js';
+import {
+  buildPublishResult,
+  executePublish,
+  resolveEngineRevision,
+  readAnalyzeArtifactFromFile,
+} from './publish.js';
 import { validate } from '../lib/schema-validator.js';
 import { encodeBatchMarker } from '../lib/hidden-marker.js';
 import { computeFindingsDigest } from '../lib/review-set-id.js';
@@ -645,5 +651,26 @@ describe('executePublish', () => {
 
     expect(octokit.rest.pulls.createReview).toHaveBeenCalledTimes(1);
     expect(retrySleep).not.toHaveBeenCalled();
+  });
+});
+
+describe('readAnalyzeArtifactFromFile', () => {
+  it('reads and parses the findings/coverage_manifest JSON written to the given path', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'analyze-artifact-'));
+    const filePath = path.join(dir, 'analyze-artifact.json');
+    const artifact = { findings: [makeFinding('cf-1')], coverage_manifest: makeCoverageManifest() };
+    writeFileSync(filePath, JSON.stringify(artifact));
+
+    try {
+      const result = readAnalyzeArtifactFromFile(filePath);
+      expect(result).toEqual(artifact);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns undefined when the path does not exist (analyze was skipped)', () => {
+    const result = readAnalyzeArtifactFromFile('/nonexistent/path/analyze-artifact.json');
+    expect(result).toBeUndefined();
   });
 });

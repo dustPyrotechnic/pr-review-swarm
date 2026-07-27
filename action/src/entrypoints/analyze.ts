@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import * as core from '@actions/core';
 import centralLimits from '../../config/central-limits.json' with { type: 'json' };
 import { assertModelAllowed } from '../lib/model-allowlist.js';
@@ -21,6 +22,10 @@ import {
 import { arbitrate, type Finding, type InternalDiagnosticEntry, type VerifiedCandidate } from '../lib/arbiter.js';
 import type { DiffHunk } from '../lib/diff-parser.js';
 import type { PrepareArtifact, PrepareShard, CoverageManifest } from './prepare.js';
+
+export function readPrepareArtifactFromFile(filePath: string): PrepareArtifact {
+  return JSON.parse(readFileSync(filePath, 'utf-8')) as PrepareArtifact;
+}
 
 const AGENT_NAMES = ['generic-correctness', 'generic-security', 'generic-maintainability'] as const;
 
@@ -292,9 +297,9 @@ export async function runAnalysis(input: AnalyzeCoreInput): Promise<AnalyzeCoreR
 }
 
 export async function run(): Promise<void> {
-  const prepareArtifactRaw = core.getInput('prepare_artifact', { required: true });
-  const prepareArtifact = JSON.parse(prepareArtifactRaw) as PrepareArtifact;
+  const prepareArtifactPath = core.getInput('prepare_artifact_path', { required: true });
   const model = core.getInput('model', { required: true });
+  const prepareArtifact = readPrepareArtifactFromFile(prepareArtifactPath);
   // Reject any model name not in action/config/allowed-models.json before it
   // is ever sent to DeepSeek — a compromised or misconfigured caller workflow
   // must not be able to redirect requests to an arbitrary model.

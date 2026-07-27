@@ -1,8 +1,9 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { runAnalysis } from './analyze.js';
+import { runAnalysis, readPrepareArtifactFromFile } from './analyze.js';
 import { validate } from '../lib/schema-validator.js';
 import type { PrepareArtifact } from './prepare.js';
 import type { LoadedSkill } from '../lib/skill-loader.js';
@@ -455,6 +456,22 @@ describe('runAnalysis', () => {
     expect(result.internalDiagnostics).toContainEqual(
       expect.objectContaining({ id: 'cf-dropped', outcome: 'rejected_verifier' }),
     );
+  });
+});
+
+describe('readPrepareArtifactFromFile', () => {
+  it('reads and parses the artifact JSON written to the given path', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'prepare-artifact-'));
+    const filePath = path.join(dir, 'prepare-artifact.json');
+    const artifact = makeArtifact();
+    writeFileSync(filePath, JSON.stringify(artifact));
+
+    try {
+      const result = readPrepareArtifactFromFile(filePath);
+      expect(result).toEqual(artifact);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -62,7 +62,7 @@ jobs:
           pr_number: ${{ inputs.pr_number }}
           identity_tuple: ${{ needs.status-start.outputs.identity_tuple }}
           prepare_artifact_path: ${{ runner.temp }}/prepare-artifact.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: steps.run.outputs.stale != 'true'
         with:
           name: prepare-artifact-${{ inputs.pr_number }}
@@ -82,7 +82,7 @@ jobs:
       hard_limit_hit: ${{ steps.run.outputs.hard_limit_hit }}
       any_required_stage_failed: ${{ steps.run.outputs.any_required_stage_failed }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: prepare-artifact-${{ inputs.pr_number }}
           path: ${{ runner.temp }}
@@ -95,7 +95,7 @@ jobs:
           prepare_artifact_path: ${{ runner.temp }}/prepare-artifact.json
           model: ${{ inputs.model }}
           analyze_artifact_path: ${{ runner.temp }}/analyze-artifact.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: analyze-artifact-${{ inputs.pr_number }}
           path: ${{ runner.temp }}/analyze-artifact.json
@@ -113,7 +113,7 @@ jobs:
     outputs:
       verdict: ${{ steps.run.outputs.verdict }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: needs.analyze.result == 'success'
         with:
           name: analyze-artifact-${{ inputs.pr_number }}

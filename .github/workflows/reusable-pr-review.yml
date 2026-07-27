@@ -53,7 +53,6 @@ jobs:
     outputs:
       stale: ${{ steps.run.outputs.stale }}
       incomplete: ${{ steps.run.outputs.incomplete }}
-      prepare_artifact: ${{ steps.run.outputs.prepare_artifact }}
     steps:
       - uses: dustPyrotechnic/pr-review-swarm/action@0777a30932bf96b30f4d14532e789d578de8e6cb
         id: run
@@ -62,6 +61,14 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           pr_number: ${{ inputs.pr_number }}
           identity_tuple: ${{ needs.status-start.outputs.identity_tuple }}
+          prepare_artifact_path: ${{ runner.temp }}/prepare-artifact.json
+      - uses: actions/upload-artifact@v4
+        if: steps.run.outputs.stale != 'true'
+        with:
+          name: prepare-artifact-${{ inputs.pr_number }}
+          path: ${{ runner.temp }}/prepare-artifact.json
+          retention-days: 1
+          overwrite: true
 
   analyze:
     needs: prepare
@@ -77,13 +84,17 @@ jobs:
       findings: ${{ steps.run.outputs.findings }}
       coverage_manifest: ${{ steps.run.outputs.coverage_manifest }}
     steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: prepare-artifact-${{ inputs.pr_number }}
+          path: ${{ runner.temp }}
       - uses: dustPyrotechnic/pr-review-swarm/action@0777a30932bf96b30f4d14532e789d578de8e6cb
         id: run
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         with:
           entrypoint: analyze
-          prepare_artifact: ${{ needs.prepare.outputs.prepare_artifact }}
+          prepare_artifact_path: ${{ runner.temp }}/prepare-artifact.json
           model: ${{ inputs.model }}
 
   publish:

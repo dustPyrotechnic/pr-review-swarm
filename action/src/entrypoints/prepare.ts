@@ -1,5 +1,6 @@
 import * as core from '@actions/core';
 import { context, getOctokit } from '@actions/github';
+import { writeFileSync } from 'node:fs';
 import centralLimits from '../../config/central-limits.json' with { type: 'json' };
 import {
   fetchIdentityTuple,
@@ -178,6 +179,10 @@ export function buildPrepareArtifact(input: PrepareCoreInput): PrepareCoreResult
   };
 
   return { incomplete, artifact };
+}
+
+export function writePrepareArtifactToFile(artifact: PrepareArtifact, filePath: string): void {
+  writeFileSync(filePath, JSON.stringify(artifact));
 }
 
 async function fetchFullFileContent(

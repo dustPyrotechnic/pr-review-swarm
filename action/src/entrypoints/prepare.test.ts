@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildPrepareArtifact } from './prepare.js';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { buildPrepareArtifact, writePrepareArtifactToFile } from './prepare.js';
 import { validate } from '../lib/schema-validator.js';
 
 const identityTuple = {
@@ -177,5 +180,40 @@ describe('buildPrepareArtifact', () => {
       h.lines.map((l) => l.content),
     );
     expect(hunkContents?.join('\n')).not.toContain(token);
+  });
+});
+
+describe('writePrepareArtifactToFile', () => {
+  it('writes the artifact as JSON to the given path, round-trippable via JSON.parse', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'prepare-artifact-'));
+    try {
+      const filePath = path.join(dir, 'prepare-artifact.json');
+      const artifact = {
+        identity_tuple: {
+          head_repo: 'octo/head-repo',
+          head_sha: 'headsha123',
+          base_repo: 'octo/repo',
+          base_ref: 'main',
+          base_sha: 'basesha456',
+          merge_base_sha: 'mergebasesha789',
+        },
+        shards: [],
+        coverage_manifest: {
+          files: [],
+          shards_complete: true,
+          hard_limit_hit: false,
+          pulls_files_pagination_truncated: false,
+          missing_patch_files: [],
+          token_usage: { prompt_tokens: 0, completion_tokens: 0 },
+        },
+      };
+
+      writePrepareArtifactToFile(artifact, filePath);
+
+      const written = JSON.parse(readFileSync(filePath, 'utf-8'));
+      expect(written).toEqual(artifact);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

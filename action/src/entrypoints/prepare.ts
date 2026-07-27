@@ -207,6 +207,8 @@ export async function run(): Promise<void> {
   const expectedIdentityTupleRaw = core.getInput('identity_tuple', { required: true });
   const expectedIdentityTuple = JSON.parse(expectedIdentityTupleRaw) as IdentityTuple;
 
+  const artifactPath = core.getInput('prepare_artifact_path', { required: true });
+
   const octokit = getOctokitFromInput();
   const owner = context.repo.owner;
   const repo = context.repo.repo;
@@ -295,7 +297,8 @@ export async function run(): Promise<void> {
     },
   });
 
+  writePrepareArtifactToFile(artifact, artifactPath);
+
   core.setOutput('stale', 'false');
   core.setOutput('incomplete', String(incomplete));
-  core.setOutput('prepare_artifact', JSON.stringify(artifact));
 }

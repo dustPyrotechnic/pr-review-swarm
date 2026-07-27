@@ -323,6 +323,12 @@ export async function run(): Promise<void> {
   if (!apiKey) {
     throw new Error('analyze: DEEPSEEK_API_KEY is not set');
   }
+  // Defence in depth for docs/AGENTS.md hard rule 5. The client scrubs the key
+  // out of its own errors, but registering it here makes Actions mask it across
+  // every log line this job ever writes, including ones from code that has no
+  // idea a secret is in play. Must happen before the client exists, so nothing
+  // can throw unmasked in between.
+  core.setSecret(apiKey);
   const client = createDeepSeekClient({ apiKey });
 
   const result = await runAnalysis({

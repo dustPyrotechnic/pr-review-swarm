@@ -28,6 +28,12 @@ const SECRET_PATTERNS: SecretPattern[] = [
 // provider-specific patterns above recognize.
 const SENSITIVE_NAME_RE = /(key|token|secret|password|credential|auth)/i;
 const QUOTED_ASSIGNMENT_RE = /([A-Za-z_][A-Za-z0-9_]*)\s*[:=]{1,2}\s*['"`]([^'"`\n]{16,})['"`]/g;
+// Credentials very often appear unquoted, in `.env` / CI-config / shell-export
+// shape: `AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/...`. Only the quoted form used to
+// be covered, so an AWS secret access key (which has no recognizable prefix for
+// SECRET_PATTERNS to match) was forwarded to the LLM in full.
+const UNQUOTED_ASSIGNMENT_RE =
+  /([A-Za-z_][A-Za-z0-9_]*)\s*[:=]{1,2}\s*([^\s'"`;,)\]}]{16,})/g;
 const HIGH_ENTROPY_MIN_LENGTH = 16;
 const HIGH_ENTROPY_THRESHOLD = 3.5;
 
@@ -45,7 +51,7 @@ function shannonEntropy(value: string): number {
 }
 
 function redactHighEntropySecrets(content: string, onRedact: () => void): string {
-  return content.replace(QUOTED_ASSIGNMENT_RE, (full, name: string, value: string) => {
+  const replacer = (full: string, name: string, value: string): string => {
     if (value.startsWith('[REDACTED:')) return full;
     if (!SENSITIVE_NAME_RE.test(name)) return full;
     if (value.length < HIGH_ENTROPY_MIN_LENGTH) return full;
@@ -53,7 +59,11 @@ function redactHighEntropySecrets(content: string, onRedact: () => void): string
 
     onRedact();
     return full.replace(value, '[REDACTED:high-entropy-secret]');
-  });
+  };
+
+  return content
+    .replace(QUOTED_ASSIGNMENT_RE, replacer)
+    .replace(UNQUOTED_ASSIGNMENT_RE, replacer);
 }
 
 export function scanAndRedactSecrets(content: string): SecretScanResult {

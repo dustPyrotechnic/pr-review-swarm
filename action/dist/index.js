@@ -19732,10 +19732,10 @@ var require_core = __commonJS({
       (0, command_1.issueCommand)("set-env", { name }, convertedVal);
     }
     exports2.exportVariable = exportVariable;
-    function setSecret(secret) {
+    function setSecret2(secret) {
       (0, command_1.issueCommand)("add-mask", {}, secret);
     }
-    exports2.setSecret = setSecret;
+    exports2.setSecret = setSecret2;
     function addPath(inputPath) {
       const filePath = process.env["GITHUB_PATH"] || "";
       if (filePath) {
@@ -36549,7 +36549,7 @@ function shannonEntropy(value) {
   return entropy;
 }
 function redactHighEntropySecrets(content, onRedact) {
-  return content.replace(QUOTED_ASSIGNMENT_RE, (full, name, value) => {
+  const replacer = (full, name, value) => {
     if (value.startsWith("[REDACTED:"))
       return full;
     if (!SENSITIVE_NAME_RE.test(name))
@@ -36560,7 +36560,8 @@ function redactHighEntropySecrets(content, onRedact) {
       return full;
     onRedact();
     return full.replace(value, "[REDACTED:high-entropy-secret]");
-  });
+  };
+  return content.replace(QUOTED_ASSIGNMENT_RE, replacer).replace(UNQUOTED_ASSIGNMENT_RE, replacer);
 }
 function scanAndRedactSecrets(content) {
   let redactedContent = content;
@@ -36576,7 +36577,7 @@ function scanAndRedactSecrets(content) {
   });
   return { redactedContent, redactionsCount };
 }
-var SECRET_PATTERNS, SENSITIVE_NAME_RE, QUOTED_ASSIGNMENT_RE, HIGH_ENTROPY_MIN_LENGTH, HIGH_ENTROPY_THRESHOLD;
+var SECRET_PATTERNS, SENSITIVE_NAME_RE, QUOTED_ASSIGNMENT_RE, UNQUOTED_ASSIGNMENT_RE, HIGH_ENTROPY_MIN_LENGTH, HIGH_ENTROPY_THRESHOLD;
 var init_secret_scanner = __esm({
   "src/lib/secret-scanner.ts"() {
     "use strict";
@@ -36589,6 +36590,7 @@ var init_secret_scanner = __esm({
     ];
     SENSITIVE_NAME_RE = /(key|token|secret|password|credential|auth)/i;
     QUOTED_ASSIGNMENT_RE = /([A-Za-z_][A-Za-z0-9_]*)\s*[:=]{1,2}\s*['"`]([^'"`\n]{16,})['"`]/g;
+    UNQUOTED_ASSIGNMENT_RE = /([A-Za-z_][A-Za-z0-9_]*)\s*[:=]{1,2}\s*([^\s'"`;,)\]}]{16,})/g;
     HIGH_ENTROPY_MIN_LENGTH = 16;
     HIGH_ENTROPY_THRESHOLD = 3.5;
   }
@@ -36876,6 +36878,11 @@ function backoffDelay(attempt, baseDelayMs) {
   const jitter = Math.random() * baseDelayMs;
   return exponential + jitter;
 }
+function redactApiKey(text, apiKey) {
+  if (!apiKey)
+    return text;
+  return text.split(apiKey).join("[REDACTED:deepseek-api-key]");
+}
 function createDeepSeekClient(options) {
   const baseUrl = options.baseUrl ?? "https://api.deepseek.com";
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -36959,7 +36966,22 @@ function createDeepSeekClient(options) {
       }
     }
   }
-  return { sendStructuredRequest };
+  async function sendStructuredRequestSafely(input) {
+    try {
+      return await sendStructuredRequest(input);
+    } catch (err) {
+      const original = err instanceof Error ? err : new Error(String(err));
+      const message = redactApiKey(original.message, options.apiKey);
+      if (message === original.message)
+        throw original;
+      const Ctor = original.constructor;
+      const scrubbed = new Ctor(message);
+      if (original.stack)
+        scrubbed.stack = redactApiKey(original.stack, options.apiKey);
+      throw scrubbed;
+    }
+  }
+  return { sendStructuredRequest: sendStructuredRequestSafely };
 }
 var SUBMIT_RESULT_FUNCTION_NAME, DeepSeekTransientError, DeepSeekResponseError;
 var init_deepseek_client = __esm({
@@ -37604,6 +37626,7 @@ async function run4() {
   if (!apiKey) {
     throw new Error("analyze: DEEPSEEK_API_KEY is not set");
   }
+  core5.setSecret(apiKey);
   const client = createDeepSeekClient({ apiKey });
   const result = await runAnalysis({
     prepareArtifact,

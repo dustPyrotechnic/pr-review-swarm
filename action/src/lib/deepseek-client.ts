@@ -38,6 +38,22 @@ function backoffDelay(attempt: number, baseDelayMs: number): number {
   return exponential + jitter;
 }
 
+/**
+ * docs/AGENTS.md hard rule 5: the DeepSeek secret must never reach a log or an
+ * artifact. This client is the only thing in the process that holds it, so it
+ * is also the only place that can contain a leak at the source.
+ *
+ * The realistic leak path is the network-error branch below: it interpolates an
+ * arbitrary upstream error message, and HTTP stacks routinely include the full
+ * request — Authorization header included — in theirs. That message then flows
+ * into `stageFailureReason` and out through `core.warning` into the job log.
+ * Scrubbing here protects every consumer of the client, not just analyze.
+ */
+function redactApiKey(text: string, apiKey: string): string {
+  if (!apiKey) return text;
+  return text.split(apiKey).join('[REDACTED:deepseek-api-key]');
+}
+
 export function createDeepSeekClient(options: DeepSeekClientOptions): DeepSeekClient {
   const baseUrl = options.baseUrl ?? 'https://api.deepseek.com';
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -135,5 +151,24 @@ export function createDeepSeekClient(options: DeepSeekClientOptions): DeepSeekCl
     }
   }
 
-  return { sendStructuredRequest };
+  // Scrub on the way out rather than only in the network branch: any error
+  // escaping this client (JSON parse failures over a response body, a custom
+  // fetchImpl's own error, …) could carry the key, and the whole point is that
+  // callers never have to think about it.
+  async function sendStructuredRequestSafely(input: StructuredRequestInput): Promise<unknown> {
+    try {
+      return await sendStructuredRequest(input);
+    } catch (err) {
+      const original = err instanceof Error ? err : new Error(String(err));
+      const message = redactApiKey(original.message, options.apiKey);
+      if (message === original.message) throw original;
+
+      const Ctor = original.constructor as new (message: string) => Error;
+      const scrubbed = new Ctor(message);
+      if (original.stack) scrubbed.stack = redactApiKey(original.stack, options.apiKey);
+      throw scrubbed;
+    }
+  }
+
+  return { sendStructuredRequest: sendStructuredRequestSafely };
 }

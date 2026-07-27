@@ -741,13 +741,14 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    outputs:
-      prepare_artifact: ${{ steps.run.outputs.prepare_artifact }}
     steps:
       - uses: <org>/pr-review-swarm@<pinned-sha>
         id: run
         with:
           entrypoint: prepare
+      # prepare_artifact 不作为 job output 传递（会超出 GitHub Actions
+      # 1MB 的 job output 上限），实际通过 actions/upload-artifact /
+      # download-artifact 以文件方式在 job 间传输，见下方说明。
 
   analyze:
     needs: prepare
@@ -786,7 +787,7 @@ jobs:
           entrypoint: status-finalize
 ```
 
-（`gate_passed` 之类的 job output 传递细节属于实现期打磨项，此处给出的是 Job/权限骨架，实际字段名以 status-start 的真实输出为准。）
+（`gate_passed` 之类的 job output 传递细节属于实现期打磨项，此处给出的是 Job/权限骨架，实际字段名以 status-start 的真实输出为准。上方 `prepare` job 的骨架中不再展示 `prepare_artifact` 作为 job output——这曾是导致 "Job outputs exceed 1,048,576 bytes" 生产故障的错误示例：`prepare_artifact` 内嵌了 diff hunks 与文件内容，跨 job 转发极易超出 GitHub Actions 1MB 的 job output 总量上限。实际实现改为将该 artifact 写入文件，经 `actions/upload-artifact` / `actions/download-artifact` 传输，具体接线方式与背景见 `docs/plans/2026-07-27-prepare-artifact-file-transport.md`，请勿再照抄本文档早期版本中的 job-output 写法。）
 
 `reusable-pr-review-watchdog.yml`：单一 Job，`permissions: { pull-requests: read, issues: write, checks: write, actions: read }`，`uses: <org>/pr-review-swarm@<pinned-sha>` + `entrypoint: watchdog`。
 

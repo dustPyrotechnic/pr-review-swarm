@@ -5,10 +5,13 @@ import {
   DeepSeekResponseError,
 } from './deepseek-client.js';
 
-function jsonResponse(status: number, body: unknown) {
+function jsonResponse(status: number, body: unknown, headers: Record<string, string> = {}) {
   return {
     ok: status >= 200 && status < 300,
     status,
+    // 真实 Response 一定有 headers；客户端会读 Retry-After 决定退避时长，
+    // fake 少了它就会在重试路径上抛 TypeError。
+    headers: new Headers(headers),
     json: () => Promise.resolve(body),
   } as Response;
 }

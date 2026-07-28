@@ -65,6 +65,33 @@ function backoffDelay(attempt: number, baseDelayMs: number): number {
 }
 
 /**
+ * 服务端用 `Retry-After` 明确告诉我们该等多久时，必须听它的，而不是套用自己的退避曲线。
+ * 无视它正是被限流升级成封禁的典型原因：我们的曲线第一次重试只等 100-200ms，而服务端
+ * 可能要求 60 秒。
+ *
+ * 两种合法形式都支持：delta-seconds（`60`）与 HTTP-date（`Wed, 21 Oct 2026 07:28:00 GMT`）。
+ * 解析不出来就返回 undefined，退回自有曲线 —— 一个畸形的头不该让重试逻辑崩掉。
+ */
+const MAX_RETRY_AFTER_MS = 120_000;
+
+function parseRetryAfterMs(headerValue: string | null, nowMs: number): number | undefined {
+  if (!headerValue) return undefined;
+  const trimmed = headerValue.trim();
+  if (!trimmed) return undefined;
+
+  if (/^\d+$/.test(trimmed)) {
+    const ms = Number(trimmed) * 1000;
+    return Math.min(ms, MAX_RETRY_AFTER_MS);
+  }
+
+  const dateMs = Date.parse(trimmed);
+  if (Number.isNaN(dateMs)) return undefined;
+  const delta = dateMs - nowMs;
+  if (delta <= 0) return undefined;
+  return Math.min(delta, MAX_RETRY_AFTER_MS);
+}
+
+/**
  * docs/AGENTS.md hard rule 5: the DeepSeek secret must never reach a log or an
  * artifact. This client is the only thing in the process that holds it, so it
  * is also the only place that can contain a leak at the source.
@@ -138,7 +165,11 @@ export function createDeepSeekClient(options: DeepSeekClientOptions): DeepSeekCl
       if (isRetryableStatus(response.status)) {
         if (attempt < maxRetries) {
           attempt += 1;
-          await sleep(backoffDelay(attempt, retryBaseDelayMs));
+          const retryAfterMs = parseRetryAfterMs(
+            response.headers.get('retry-after'),
+            Date.now(),
+          );
+          await sleep(retryAfterMs ?? backoffDelay(attempt, retryBaseDelayMs));
           continue;
         }
         throw new DeepSeekTransientError(
@@ -152,11 +183,20 @@ export function createDeepSeekClient(options: DeepSeekClientOptions): DeepSeekCl
         );
       }
 
-      const body = (await response.json()) as {
+      // 空响应体或畸形 JSON 会让 response.json() 抛裸 SyntaxError。那是内容问题不是传输
+      // 问题，重试没有意义，但也不能以一个来路不明的异常类型逃出这个客户端。
+      let body: {
         choices?: Array<{
           message?: { tool_calls?: Array<{ function?: { name?: string; arguments?: string } }> };
         }>;
       };
+      try {
+        body = (await response.json()) as typeof body;
+      } catch {
+        throw new DeepSeekResponseError(
+          'deepseek-client: response body is empty or not valid JSON',
+        );
+      }
       const toolCall = body.choices?.[0]?.message?.tool_calls?.find(
         (call) => call.function?.name === SUBMIT_RESULT_FUNCTION_NAME,
       );

@@ -36963,6 +36963,24 @@ function backoffDelay2(attempt, baseDelayMs) {
   const jitter = Math.random() * baseDelayMs;
   return exponential + jitter;
 }
+function parseRetryAfterMs(headerValue, nowMs) {
+  if (!headerValue)
+    return void 0;
+  const trimmed = headerValue.trim();
+  if (!trimmed)
+    return void 0;
+  if (/^\d+$/.test(trimmed)) {
+    const ms = Number(trimmed) * 1e3;
+    return Math.min(ms, MAX_RETRY_AFTER_MS);
+  }
+  const dateMs = Date.parse(trimmed);
+  if (Number.isNaN(dateMs))
+    return void 0;
+  const delta = dateMs - nowMs;
+  if (delta <= 0)
+    return void 0;
+  return Math.min(delta, MAX_RETRY_AFTER_MS);
+}
 function redactApiKey(text, apiKey) {
   if (!apiKey)
     return text;
@@ -37020,7 +37038,11 @@ function createDeepSeekClient(options) {
       if (isRetryableStatus(response.status)) {
         if (attempt < maxRetries) {
           attempt += 1;
-          await sleep(backoffDelay2(attempt, retryBaseDelayMs));
+          const retryAfterMs = parseRetryAfterMs(
+            response.headers.get("retry-after"),
+            Date.now()
+          );
+          await sleep(retryAfterMs ?? backoffDelay2(attempt, retryBaseDelayMs));
           continue;
         }
         throw new DeepSeekTransientError(
@@ -37032,7 +37054,14 @@ function createDeepSeekClient(options) {
           `deepseek-client: request failed with status ${response.status}`
         );
       }
-      const body = await response.json();
+      let body;
+      try {
+        body = await response.json();
+      } catch {
+        throw new DeepSeekResponseError(
+          "deepseek-client: response body is empty or not valid JSON"
+        );
+      }
       const toolCall = body.choices?.[0]?.message?.tool_calls?.find(
         (call) => call.function?.name === SUBMIT_RESULT_FUNCTION_NAME
       );
@@ -37075,7 +37104,7 @@ function createDeepSeekClient(options) {
   }
   return { sendStructuredRequest: sendStructuredRequestSafely };
 }
-var SUBMIT_RESULT_FUNCTION_NAME, DeepSeekTransientError, DeepSeekResponseError, NonFiniteNumberError;
+var SUBMIT_RESULT_FUNCTION_NAME, DeepSeekTransientError, DeepSeekResponseError, NonFiniteNumberError, MAX_RETRY_AFTER_MS;
 var init_deepseek_client = __esm({
   "src/lib/deepseek-client.ts"() {
     "use strict";
@@ -37090,6 +37119,7 @@ var init_deepseek_client = __esm({
         this.literal = literal;
       }
     };
+    MAX_RETRY_AFTER_MS = 12e4;
   }
 });
 

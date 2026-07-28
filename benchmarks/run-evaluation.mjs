@@ -4,6 +4,18 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CASES_DIR = join(__dirname, 'cases');
+const THRESHOLDS_PATH = join(__dirname, 'thresholds.json');
+
+/**
+ * analyze 管线尚未接入本脚本（见 evaluateCase 里的 TODO）。
+ *
+ * 这是一个**显式**开关，而不是从"命中数为 0"反推出来的。原先的判定是
+ * `totalMustFindHit === 0 → 视为桩模式并关闭召回率门槛`，那本身就是个缺陷：一次真实但
+ * 召回率为 0 的运行（也就是最该报警的情形）会被当成桩而静默放行。
+ *
+ * 接上真实管线时，把它改成 true，并删掉 evaluateCase 里的 TODO。
+ */
+const ANALYZE_RUNNER_IMPLEMENTED = false;
 
 /**
  * Phase 1 benchmark runner — compares analyze pipeline output against
@@ -88,13 +100,39 @@ function main() {
   console.log(`Total false positives: ${totalFalsePositives}`);
   console.log(`Total false negatives (must_not_find): ${totalMustNotFindHit}`);
 
-  // PHASE 1: the analyze pipeline is a stub — findings is always []. 
-  // Do not fail on recall in Phase 1; Phase 2+ removes this exemption.
-  const isPhase1Stub = totalMustFind > 0 && totalMustFindHit === 0;
-  if (isPhase1Stub) {
-    console.log('\nℹ️  Phase 1 stub mode — recall thresholds disabled');
-  } else if (overallRecall < 0.8) {
-    console.log('\n⚠️  Overall recall below 80% threshold');
+  const thresholds = loadJson(THRESHOLDS_PATH);
+  const gateMode = process.argv.includes('--gate');
+
+  if (!ANALYZE_RUNNER_IMPLEMENTED) {
+    console.log('\n⚠️  analyze 管线尚未接入本脚本：findings 恒为 []，上面所有指标都没有意义。');
+    console.log('    在 evaluateCase 的 TODO 落地之前，这里给出的任何"通过"都是空洞的。');
+    if (gateMode) {
+      console.log('\n✗ --gate 模式拒绝在桩实现上给出绿灯。');
+      process.exit(1);
+    }
+    console.log('\n（非 --gate 模式：仅打印指标，不作为门禁。）');
+    return;
+  }
+
+  const violations = [];
+  if (overallRecall < thresholds.min_recall) {
+    violations.push(
+      `召回率 ${(overallRecall * 100).toFixed(1)}% 低于门槛 ${(thresholds.min_recall * 100).toFixed(1)}%`,
+    );
+  }
+  // 误报数是这个产品的头号杀手，硬门槛。
+  if (totalFalsePositives > thresholds.max_false_positives) {
+    violations.push(
+      `误报 ${totalFalsePositives} 条超过上限 ${thresholds.max_false_positives}`,
+    );
+  }
+  if (totalMustNotFindHit > 0) {
+    violations.push(`命中了 ${totalMustNotFindHit} 条 must_not_find（误报陷阱）`);
+  }
+
+  if (violations.length > 0) {
+    console.log('\n✗ 未达到回归评测门槛：');
+    for (const v of violations) console.log(`    - ${v}`);
     process.exit(1);
   }
 

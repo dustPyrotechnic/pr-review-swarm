@@ -6,6 +6,7 @@ export function parseArgs(argv) {
   let deepseekKey;
   let directPush = false;
   let force = false;
+  let pinSha = false;
 
   for (const arg of argv) {
     if (arg === '--help' || arg === '-h') {
@@ -16,6 +17,8 @@ export function parseArgs(argv) {
       directPush = true;
     } else if (arg === '--force') {
       force = true;
+    } else if (arg === '--pin-sha') {
+      pinSha = true;
     } else if (!arg.startsWith('-')) {
       positional.push(arg);
     } else {
@@ -26,7 +29,7 @@ export function parseArgs(argv) {
   const command = positional[0];
 
   if (!command) {
-    if (help) return { command: undefined, help, deepseekKey, directPush, force };
+    if (help) return { command: undefined, help, deepseekKey, directPush, force, pinSha };
     throw new Error('no command given — run with --help to see usage');
   }
 
@@ -34,5 +37,5 @@ export function parseArgs(argv) {
     throw new Error(`unknown command: ${command}`);
   }
 
-  return { command, help, deepseekKey, directPush, force };
+  return { command, help, deepseekKey, directPush, force, pinSha };
 }

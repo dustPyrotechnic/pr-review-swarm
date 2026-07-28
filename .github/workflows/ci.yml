@@ -51,6 +51,19 @@ jobs:
       - run: npm run build
       - run: git add -A -- dist && git diff --cached --exit-code -- dist
 
+  pin-reachable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      # 一致性由 action/test/workflows/repin.test.ts 保证；这里额外确认 pin 的 commit
+      # 真的存在于本仓库历史里（需要完整历史，所以单独成 job）。
+      - run: node scripts/check-pin-reachable.mjs
+
   schema-validate:
     runs-on: ubuntu-latest
     steps:

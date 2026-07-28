@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { password } from '@inquirer/prompts';
 import { parseArgs } from './lib/parse-args.mjs';
 import { checkGhCli } from './lib/check-gh-cli.mjs';
 import { detectRepo } from './lib/detect-repo.mjs';
 import { resolveDeepseekKey } from './lib/resolve-deepseek-key.mjs';
+import { resolveRef } from './lib/resolve-ref.mjs';
 import { writeWorkflows } from './lib/write-workflows.mjs';
 import { writeRepoConfig } from './lib/write-repo-config.mjs';
 import { setSecret } from './lib/set-secret.mjs';
@@ -23,6 +23,8 @@ Options:
   --deepseek-key=<key>   DeepSeek API key (else reads DEEPSEEK_API_KEY env var, else prompts)
   --direct-push          Commit and push directly instead of opening a PR
   --force                Overwrite existing workflow/config files instead of erroring
+  --pin-sha              Pin the installed workflows to an immutable commit SHA instead of
+                         the moving v1 tag (upgrades then need a re-run of this command)
   --help                 Show this help text
 
 Run from inside the target repo's working directory, with a GitHub "origin" remote
@@ -39,11 +41,6 @@ function realFs() {
   };
 }
 
-function readPinnedSha() {
-  const versionPath = new URL('../VERSION', import.meta.url);
-  return readFileSync(fileURLToPath(versionPath), 'utf-8').trim();
-}
-
 async function main() {
   const args = parseArgs(process.argv.slice(2));
 
@@ -57,10 +54,9 @@ async function main() {
   }
 
   const fs = realFs();
-  const pinnedSha = readPinnedSha();
 
   const summary = await runDeploy(
-    { deepseekKeyFlag: args.deepseekKey, directPush: args.directPush, force: args.force },
+    { deepseekKeyFlag: args.deepseekKey, directPush: args.directPush, force: args.force, pinSha: args.pinSha },
     {
       checkGhCli,
       detectRepo,
@@ -68,14 +64,20 @@ async function main() {
         resolveDeepseekKey({ ...opts, env: process.env, prompt: () => password({ message: 'DeepSeek API key:' }) }),
       writeWorkflows: (opts) => writeWorkflows({ ...opts, fs }),
       writeRepoConfig: (opts) => writeRepoConfig({ ...opts, fs }),
+      resolveRef,
       setSecret,
       deployChanges,
-      pinnedSha,
     },
   );
 
   console.log('\n✅ PR Review Swarm installed:');
   console.log(`  Workflow files: ${summary.workflowFiles.join(', ') || '(none written)'}`);
+  console.log(
+    `  Pinned to: ${summary.ref}` +
+      (summary.refMode === 'tag'
+        ? ' (moving major tag — central releases roll out automatically)'
+        : ' (immutable SHA — re-run with --force to upgrade)'),
+  );
   console.log(`  Repo config: ${summary.repoConfigFile.join(', ') || '(already existed, left untouched)'}`);
   console.log(`  DEEPSEEK_API_KEY secret: set on ${summary.owner}/${summary.repo}`);
   if (summary.deployResult.mode === 'pr') {

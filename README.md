@@ -15,6 +15,7 @@
 ├── skills/              # Agent 可装备的 Markdown 审核 checklist
 ├── schemas/             # candidate finding / finding 的 JSON Schema
 ├── benchmarks/          # 回归评测用例
+├── scripts/             # 维护脚本（repin / release / 一致性校验）
 └── .github/workflows/   # reusable workflow
 ```
 
@@ -39,11 +40,13 @@ pr-agent deploy --deepseek-key=sk-xxxx
 
 `npm link` 只在本机生效，指向的是你本地这份 clone 的代码；中央仓库更新后需要 `git pull` 才能跟上（不像 `npx github:...#tag` 每次都拉取远端最新代码）。
 
+默认写入的 workflow 钉在中央仓库的移动大版本 tag `v1` 上：中央仓库每次发布都会把 `v1` 移到新 commit，**使用方仓库无需任何改动就能拿到更新**。如果你的仓库需要不可变的供应链 pin，加 `--pin-sha`：部署时会把 `v1` 解析成当时的 40 位 commit SHA 写进 workflow，之后升级要重新跑一次 `pr-agent deploy --force --pin-sha`。两种模式生成的文件顶部都会写明当前 pin 与升级方式。
+
 不传 `--deepseek-key` 时会走交互式遮罩输入，也可用 `DEEPSEEK_API_KEY` 环境变量传入；key 不会出现在任何日志或命令行参数里。默认会新建分支、开一个 PR 供你审阅后合并；加 `--direct-push` 可跳过 PR 直接推送到当前分支。命令会自动：写入两份监听器 workflow、写入默认 `.github/pr-review-swarm.yml`、设置 `DEEPSEEK_API_KEY` secret、检查 Actions 权限是否允许创建 PR。详见 `cli/` 目录，`--help` 可查看完整参数。
 
 ### 方式二：手动接入
 
-目标仓库需要安装两个小型监听器 workflow，都固定引用中央仓库某个 commit SHA：一个响应 PR 事件触发常规审核，一个按 schedule 触发 watchdog 清理超时的 Check。
+目标仓库需要安装两个小型监听器 workflow：一个响应 PR 事件触发常规审核，一个按 schedule 触发 watchdog 清理超时的 Check。两者都引用中央仓库的同一个 ref —— 用 `v1`（移动大版本 tag，自动跟随中央仓库发布）或一个 40 位 commit SHA（不可变，升级需手动改）。
 
 ### 常规审核监听器
 
@@ -60,7 +63,7 @@ on:
 
 jobs:
   review:
-    uses: <org>/pr-review-swarm/.github/workflows/reusable-pr-review.yml@<pinned-commit-sha>
+    uses: <org>/pr-review-swarm/.github/workflows/reusable-pr-review.yml@v1
     with:
       pr_number: ${{ github.event.pull_request.number || inputs.pr_number }}
       model: 'deepseek-chat' # 需与 action/config/allowed-models.json 中的白名单一致
@@ -82,10 +85,28 @@ on:
 
 jobs:
   watchdog:
-    uses: <org>/pr-review-swarm/.github/workflows/reusable-pr-review-watchdog.yml@<pinned-commit-sha>
+    uses: <org>/pr-review-swarm/.github/workflows/reusable-pr-review-watchdog.yml@v1
 ```
 
 具体权限拆分、Job 结构和安全模型见设计文档。
+
+## 中央仓库如何发布（维护者）
+
+使用方仓库钉在 `v1` 上，所以"发布"= 把 `v1` 移到新 commit。这一步只走脚本，不手改：
+
+```bash
+node scripts/release.mjs 1.2.3          # 本地：同步内部 pin、提交、打 v1.2.3、移动 v1
+node scripts/release.mjs 1.2.3 --push   # 确认无误后再推送
+```
+
+脚本会先要求工作区干净，再把信任链 workflow 内部全部 `dustPyrotechnic/pr-review-swarm/action@<sha>`
+统一改写到本次发布的 commit —— 跨仓库调用时 `uses: ./...` 会解析到**调用方**仓库，所以这些引用
+必须写完整 SHA，且必须一次性全部同步。CI 有两道对应的护栏：
+
+- `action/test/workflows/repin.test.ts`：6 处内部 pin 必须完全一致（挡住只改一半的部分 repin）
+- CI `pin-reachable` job：pin 的 commit 必须真实存在于本仓库历史（挡住 pin 到未推送/被 rebase 掉的 commit）
+
+只想单独重新 pin 而不发布时：`node scripts/repin.mjs HEAD`。
 
 ## 安全模型摘要
 

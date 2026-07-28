@@ -10,6 +10,7 @@ describe('parseArgs', () => {
       deepseekKey: undefined,
       directPush: false,
       force: false,
+      pinSha: false,
     });
   });
 
@@ -33,6 +34,14 @@ describe('parseArgs', () => {
     const result = parseArgs(['deploy', '--help']);
     expect(result.command).toBe('deploy');
     expect(result.help).toBe(true);
+  });
+
+  it('defaults pinSha to false so deploys follow the moving major tag', () => {
+    expect(parseArgs(['deploy']).pinSha).toBe(false);
+  });
+
+  it('parses --pin-sha', () => {
+    expect(parseArgs(['deploy', '--pin-sha']).pinSha).toBe(true);
   });
 
   it('throws on an unknown command', () => {

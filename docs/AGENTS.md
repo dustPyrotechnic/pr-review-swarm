@@ -32,3 +32,12 @@
    窗口时进行多分片审核，不静默截断，也不因预算只展示 Top N 问题。"）、L110（"任一上限
    被触发，本次运行直接判定为 `incomplete`，不得截断后按 `pass`/`changes_requested`
    处理。"）、L264、L318（同一原则在信任门控预算和最终验收标准中重申）。
+9. 禁止把可变 tag（`v1` 等）写进信任链 workflow 内部的 `uses:` —— 包括本仓库自身的
+   `dustPyrotechnic/pr-review-swarm/action@...`。参见设计文档 L38："reusable workflow 及其
+   内部 custom action、第三方 Action 均固定到完整 commit SHA。"这些步骤持有 DEEPSEEK Secret
+   或 `pull-requests: write`，可变 tag 等于把凭据交给任何能移动该 tag 的人。
+   内部 pin 一律用 `node scripts/repin.mjs <sha>` 一次性同步全部 6 处，禁止手工逐行改
+   （`action/test/workflows/repin.test.ts` 会挡住只改一半的部分 repin）。
+   **例外且仅此一处**：使用方仓库的 caller workflow 引用本仓库 reusable workflow 时用 `v1`
+   是刻意设计 —— 它是使用方对本仓库的信任声明，不在本仓库信任链内部；需要不可变 pin 的
+   使用方可用 `pr-agent deploy --pin-sha`。

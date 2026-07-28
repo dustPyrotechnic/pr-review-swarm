@@ -1,4 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import maliciousPaths from '../../test/fixtures/malicious-paths.json' with { type: 'json' };
 import { isFindingLocatable } from './inline-comment-locator.js';
 import { parsePatch, type ParsedFileDiff } from './diff-parser.js';
 import type { Finding } from './arbiter.js';
@@ -75,5 +77,42 @@ describe('isFindingLocatable', () => {
       fileDiffs,
     );
     expect(locatable).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 恶意文件名矩阵（对抗性测试加固计划 Task 4.2）
+// ---------------------------------------------------------------------------
+
+const MALICIOUS_PATHS: Array<[string, string]> = maliciousPaths.paths.map((p) => [p.id, p.path]);
+
+describe('恶意路径的 inline 定位', () => {
+  it('语料非空（防止 JSON 读错导致空跑假绿）', () => {
+    expect(MALICIOUS_PATHS.length).toBeGreaterThanOrEqual(20);
+  });
+
+  it.each(MALICIOUS_PATHS)('%s 定位失败（不匹配任何已解析的 diff）', (_id, path) => {
+    expect(isFindingLocatable(makeFinding({ path }), fileDiffs)).toBe(false);
+  });
+
+  it.each(MALICIOUS_PATHS)('%s 不会 crash', (_id, path) => {
+    expect(() => isFindingLocatable(makeFinding({ path }), fileDiffs)).not.toThrow();
+    expect(() => isFindingLocatable(makeFinding({ path }), [])).not.toThrow();
+  });
+
+  it('路径比对是精确匹配，不做归一化——./src/foo.ts 不等于 src/foo.ts', () => {
+    // 若这里改成 path.normalize 之类的"宽容"比对，攻击者就能用等价路径把 finding
+    // 挂到另一个文件的 diff 上。
+    expect(isFindingLocatable(makeFinding({ path: './src/foo.ts' }), fileDiffs)).toBe(false);
+    expect(isFindingLocatable(makeFinding({ path: 'src//foo.ts' }), fileDiffs)).toBe(false);
+    expect(isFindingLocatable(makeFinding({ path: 'src/./foo.ts' }), fileDiffs)).toBe(false);
+    // 前置健全性：真实路径确实能定位成功，否则上面三条毫无意义。
+    expect(isFindingLocatable(makeFinding({ path: 'src/foo.ts' }), fileDiffs)).toBe(true);
+  });
+
+  it('inline 定位不做任何文件系统读取', () => {
+    const source = readFileSync(new URL('./inline-comment-locator.ts', import.meta.url), 'utf-8');
+    expect(source).not.toMatch(/from 'node:fs'|readFile|existsSync/);
+    expect(source).not.toMatch(/from 'node:path'/);
   });
 });

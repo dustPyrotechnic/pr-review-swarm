@@ -1,0 +1,28 @@
+name: Nightly
+
+# 压力与资源测试不阻塞 PR：它们要生成几千个文件、几十 MB 的 diff，跑一次几十秒到几分钟。
+# 放进 PR 门禁只会让人开始习惯性忽略红灯（见 docs/plans/2026-07-27-adversarial-test-hardening-plan.md
+# Phase 7）。
+on:
+  schedule:
+    - cron: '17 18 * * *' # 每天 02:17 (UTC+8)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: action
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - name: Stress and resource-pressure suite
+        run: npm run test:stress

@@ -34063,6 +34063,30 @@ var init_prepare_artifact_schema = __esm({
   }
 });
 
+// ../schemas/analyze-artifact.schema.json
+var analyze_artifact_schema_default;
+var init_analyze_artifact_schema = __esm({
+  "../schemas/analyze-artifact.schema.json"() {
+    analyze_artifact_schema_default = {
+      $schema: "http://json-schema.org/draft-07/schema#",
+      $id: "https://pr-review-swarm/schemas/analyze-artifact.schema.json",
+      description: "analyze \u2192 publish \u4E4B\u95F4\u901A\u8FC7 upload/download-artifact \u4F20\u8F93\u7684\u4EA7\u7269\u3002publish \u8BFB\u53D6\u65F6\u5FC5\u987B\u6309\u6B64\u6821\u9A8C\uFF1A\u4E00\u4E2A\u88AB\u622A\u65AD\u7684 artifact \u82E5\u88AB\u5F53\u6210\u300C\u96F6 finding\u300D\u7EE7\u7EED\u53D1\u5E03\uFF0C\u5C31\u662F\u9759\u9ED8\u6F0F\u5BA1\u3002",
+      type: "object",
+      additionalProperties: false,
+      required: ["findings", "coverage_manifest"],
+      properties: {
+        findings: {
+          type: "array",
+          items: { $ref: "https://pr-review-swarm/schemas/finding.schema.json" }
+        },
+        coverage_manifest: {
+          $ref: "https://pr-review-swarm/schemas/coverage-manifest.schema.json"
+        }
+      }
+    };
+  }
+});
+
 // ../schemas/verifier-conclusion.schema.json
 var verifier_conclusion_schema_default;
 var init_verifier_conclusion_schema = __esm({
@@ -34119,6 +34143,7 @@ var init_schema_validator = __esm({
     init_verdict_schema();
     init_repo_config_schema();
     init_prepare_artifact_schema();
+    init_analyze_artifact_schema();
     init_verifier_conclusion_schema();
     ajv = new import_ajv.Ajv({ allErrors: true, strict: false });
     for (const schema2 of [
@@ -34129,6 +34154,7 @@ var init_schema_validator = __esm({
       verdict_schema_default,
       repo_config_schema_default,
       prepare_artifact_schema_default,
+      analyze_artifact_schema_default,
       verifier_conclusion_schema_default
     ]) {
       ajv.addSchema(schema2);
@@ -34562,7 +34588,8 @@ var init_central_limits = __esm({
       maxShardsPerRun: 20,
       maxFindingsPerReviewBatch: 20,
       maxReviewBodyChars: 6e4,
-      maxExpertSchemaRetries: 1
+      maxExpertSchemaRetries: 1,
+      maxArtifactBytes: 64e6
     };
   }
 });
@@ -37445,6 +37472,58 @@ var init_arbiter = __esm({
   }
 });
 
+// src/lib/artifact-reader.ts
+function assertSizeWithinLimit(label, filePath, maxBytes) {
+  const { size } = (0, import_node_fs3.statSync)(filePath);
+  if (size > maxBytes) {
+    throw new ArtifactReadError(
+      `${label}: \u6587\u4EF6\u5927\u5C0F ${size} bytes \u8D85\u8FC7\u4E0A\u9650 ${maxBytes} bytes (size limit exceeded)\uFF0C\u62D2\u7EDD\u8BFB\u53D6`
+    );
+  }
+}
+function parseJson(label, filePath) {
+  const raw = (0, import_node_fs3.readFileSync)(filePath, "utf-8");
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    throw new ArtifactReadError(
+      `${label}: \u5185\u5BB9\u4E0D\u662F\u5408\u6CD5 JSON (${err instanceof Error ? err.message : String(err)})`
+    );
+  }
+}
+function validateAgainstSchema(label, schemaId, data) {
+  const result = validate(schemaId, data);
+  if (!result.valid) {
+    throw new ArtifactReadError(`${label}: schema validation failed \u2014 ${result.errors.join("; ")}`);
+  }
+  return result.data;
+}
+function readRequiredArtifact(params) {
+  const { label, filePath, schemaId } = params;
+  const maxBytes = params.options?.maxBytes ?? central_limits_default.maxArtifactBytes;
+  if (!(0, import_node_fs3.existsSync)(filePath)) {
+    throw new ArtifactReadError(`${label}: \u6587\u4EF6\u4E0D\u5B58\u5728\uFF1A${filePath}`);
+  }
+  assertSizeWithinLimit(label, filePath, maxBytes);
+  return validateAgainstSchema(label, schemaId, parseJson(label, filePath));
+}
+function readOptionalArtifact(params) {
+  if (!(0, import_node_fs3.existsSync)(params.filePath))
+    return void 0;
+  return readRequiredArtifact(params);
+}
+var import_node_fs3, ArtifactReadError;
+var init_artifact_reader = __esm({
+  "src/lib/artifact-reader.ts"() {
+    "use strict";
+    import_node_fs3 = require("node:fs");
+    init_central_limits();
+    init_schema_validator();
+    ArtifactReadError = class extends Error {
+    };
+  }
+});
+
 // src/entrypoints/analyze.ts
 var analyze_exports = {};
 __export(analyze_exports, {
@@ -37453,11 +37532,16 @@ __export(analyze_exports, {
   runAnalysis: () => runAnalysis,
   writeAnalyzeArtifactToFile: () => writeAnalyzeArtifactToFile
 });
-function readPrepareArtifactFromFile(filePath) {
-  return JSON.parse((0, import_node_fs3.readFileSync)(filePath, "utf-8"));
+function readPrepareArtifactFromFile(filePath, options) {
+  return readRequiredArtifact({
+    label: "prepare-artifact",
+    filePath,
+    schemaId: "https://pr-review-swarm/schemas/prepare-artifact.schema.json",
+    ...options ? { options } : {}
+  });
 }
 function writeAnalyzeArtifactToFile(artifact, filePath) {
-  (0, import_node_fs3.writeFileSync)(filePath, JSON.stringify(artifact));
+  (0, import_node_fs4.writeFileSync)(filePath, JSON.stringify(artifact));
 }
 function agentCategory(agentName) {
   return agentName.replace("generic-", "");
@@ -37691,11 +37775,11 @@ async function run4() {
   core5.setOutput("any_required_stage_failed", String(result.anyRequiredStageFailed));
   core5.setOutput("internal_diagnostics", JSON.stringify(result.internalDiagnostics));
 }
-var import_node_fs3, core5, AGENT_NAMES;
+var import_node_fs4, core5, AGENT_NAMES;
 var init_analyze = __esm({
   "src/entrypoints/analyze.ts"() {
     "use strict";
-    import_node_fs3 = require("node:fs");
+    import_node_fs4 = require("node:fs");
     core5 = __toESM(require_core(), 1);
     init_central_limits();
     init_model_allowlist();
@@ -37705,6 +37789,7 @@ var init_analyze = __esm({
     init_deterministic_evidence_validator();
     init_verifier_client();
     init_arbiter();
+    init_artifact_reader();
     AGENT_NAMES = ["generic-correctness", "generic-security", "generic-maintainability"];
   }
 });
@@ -37993,10 +38078,13 @@ __export(publish_exports, {
   resolveEngineRevision: () => resolveEngineRevision,
   run: () => run5
 });
-function readAnalyzeArtifactFromFile(filePath) {
-  if (!(0, import_node_fs4.existsSync)(filePath))
-    return void 0;
-  return JSON.parse((0, import_node_fs4.readFileSync)(filePath, "utf-8"));
+function readAnalyzeArtifactFromFile(filePath, options) {
+  return readOptionalArtifact({
+    label: "analyze-artifact",
+    filePath,
+    schemaId: "https://pr-review-swarm/schemas/analyze-artifact.schema.json",
+    ...options ? { options } : {}
+  });
 }
 function buildMarkdownSummary(verdictSummary, findings) {
   const lines = ["# PR Review Swarm", ""];
@@ -38325,12 +38413,11 @@ async function run5() {
   await core6.summary.addRaw(result.markdownSummary).write();
   core6.setOutput("verdict", JSON.stringify(result.verdictSummary));
 }
-var import_node_crypto2, import_node_fs4, core6, import_github5;
+var import_node_crypto2, core6, import_github5;
 var init_publish = __esm({
   "src/entrypoints/publish.ts"() {
     "use strict";
     import_node_crypto2 = require("node:crypto");
-    import_node_fs4 = require("node:fs");
     core6 = __toESM(require_core(), 1);
     import_github5 = __toESM(require_github(), 1);
     init_central_limits();
@@ -38343,6 +38430,7 @@ var init_publish = __esm({
     init_publish_manifest();
     init_hidden_marker();
     init_publisher_identity();
+    init_artifact_reader();
     init_diff_parser();
     init_inline_comment_locator();
     init_retry();

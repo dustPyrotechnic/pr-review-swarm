@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
 import * as core from '@actions/core';
 import { context, getOctokit } from '@actions/github';
 import centralLimits from '../../config/central-limits.json' with { type: 'json' };
@@ -18,6 +17,7 @@ import { computeReviewSetId } from '../lib/review-set-id.js';
 import { planReviewBatches, type ReviewBatch, type ReviewBatchLimits } from '../lib/publish-manifest.js';
 import { decodeBatchMarker, encodeBatchMarker } from '../lib/hidden-marker.js';
 import { isAuthoredByPublisher, type MaybeAuthored } from '../lib/publisher-identity.js';
+import { readOptionalArtifact, type ReadArtifactOptions } from '../lib/artifact-reader.js';
 import { parsePatch, type ParsedFileDiff } from '../lib/diff-parser.js';
 import { isFindingLocatable } from '../lib/inline-comment-locator.js';
 import { withRetry } from '../lib/retry.js';
@@ -41,9 +41,16 @@ export interface AnalyzeArtifact {
 // rather than throwing, letting run() fall back to the same "nothing
 // verified" defaults it already used when the findings/coverage_manifest
 // inputs were simply empty strings.
-export function readAnalyzeArtifactFromFile(filePath: string): AnalyzeArtifact | undefined {
-  if (!existsSync(filePath)) return undefined;
-  return JSON.parse(readFileSync(filePath, 'utf-8')) as AnalyzeArtifact;
+export function readAnalyzeArtifactFromFile(
+  filePath: string,
+  options?: ReadArtifactOptions,
+): AnalyzeArtifact | undefined {
+  return readOptionalArtifact<AnalyzeArtifact>({
+    label: 'analyze-artifact',
+    filePath,
+    schemaId: 'https://pr-review-swarm/schemas/analyze-artifact.schema.json',
+    ...(options ? { options } : {}),
+  });
 }
 
 export interface VerdictSummary {

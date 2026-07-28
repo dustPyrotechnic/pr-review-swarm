@@ -6,6 +6,7 @@ import coverageManifestSchema from '../../../schemas/coverage-manifest.schema.js
 import verdictSchema from '../../../schemas/verdict.schema.json' with { type: 'json' };
 import repoConfigSchema from '../../../schemas/repo-config.schema.json' with { type: 'json' };
 import prepareArtifactSchema from '../../../schemas/prepare-artifact.schema.json' with { type: 'json' };
+import analyzeArtifactSchema from '../../../schemas/analyze-artifact.schema.json' with { type: 'json' };
 import verifierConclusionSchema from '../../../schemas/verifier-conclusion.schema.json' with { type: 'json' };
 
 export type ValidationResult<T> =
@@ -22,6 +23,7 @@ for (const schema of [
   verdictSchema,
   repoConfigSchema,
   prepareArtifactSchema,
+  analyzeArtifactSchema,
   verifierConclusionSchema,
 ]) {
   ajv.addSchema(schema);

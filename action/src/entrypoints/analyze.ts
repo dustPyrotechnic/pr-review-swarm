@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import * as core from '@actions/core';
 import centralLimits from '../../config/central-limits.json' with { type: 'json' };
 import { assertModelAllowed } from '../lib/model-allowlist.js';
@@ -22,9 +22,18 @@ import {
 import { arbitrate, type Finding, type InternalDiagnosticEntry, type VerifiedCandidate } from '../lib/arbiter.js';
 import type { DiffHunk } from '../lib/diff-parser.js';
 import type { PrepareArtifact, PrepareShard, CoverageManifest } from './prepare.js';
+import { readRequiredArtifact, type ReadArtifactOptions } from '../lib/artifact-reader.js';
 
-export function readPrepareArtifactFromFile(filePath: string): PrepareArtifact {
-  return JSON.parse(readFileSync(filePath, 'utf-8')) as PrepareArtifact;
+export function readPrepareArtifactFromFile(
+  filePath: string,
+  options?: ReadArtifactOptions,
+): PrepareArtifact {
+  return readRequiredArtifact<PrepareArtifact>({
+    label: 'prepare-artifact',
+    filePath,
+    schemaId: 'https://pr-review-swarm/schemas/prepare-artifact.schema.json',
+    ...(options ? { options } : {}),
+  });
 }
 
 export interface AnalyzeArtifact {

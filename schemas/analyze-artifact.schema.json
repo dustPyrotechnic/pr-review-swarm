@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pr-review-swarm/schemas/analyze-artifact.schema.json",
+  "description": "analyze → publish 之间通过 upload/download-artifact 传输的产物。publish 读取时必须按此校验：一个被截断的 artifact 若被当成「零 finding」继续发布，就是静默漏审。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["findings", "coverage_manifest"],
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "https://pr-review-swarm/schemas/finding.schema.json" }
+    },
+    "coverage_manifest": {
+      "$ref": "https://pr-review-swarm/schemas/coverage-manifest.schema.json"
+    }
+  }
+}

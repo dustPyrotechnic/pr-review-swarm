@@ -1,4 +1,5 @@
 import type { getOctokit } from '@actions/github';
+import { withRetry } from './retry.js';
 
 type Octokit = ReturnType<typeof getOctokit>;
 
@@ -81,6 +82,22 @@ export type CheckConclusion =
   | 'cancelled'
   | 'timed_out';
 
+/**
+ * Check Run 是权威门禁，写不进去就意味着 PR 上挂着一个永远 in_progress 的门禁。
+ * status-start 的清理与 watchdog 的终结可能同时 PATCH 同一个 Check，GitHub 会用 409
+ * 拒掉其中一个——那是纯粹的并发冲突，重试即可。
+ *
+ * 422 刻意不重试：它表示请求本身不可处理（例如 output 字段非法），重试不会变好，
+ * 而静默吞掉会把真正的载荷错误藏起来。让它抛出去 —— job 变红是可观测的，
+ * watchdog 仍会在超时阈值后兜底终结这个 Check。
+ */
+function isRetryableCheckUpdateError(err: unknown): boolean {
+  const status = (err as { status?: unknown } | null)?.status;
+  if (status === undefined) return true; // 网络错误，没有 HTTP 状态码
+  if (status === 409) return true; // 并发冲突
+  return status === 429 || (typeof status === 'number' && status >= 500 && status < 600);
+}
+
 export async function patchCheckConclusion(
   octokit: Octokit,
   params: {
@@ -90,18 +107,28 @@ export async function patchCheckConclusion(
     conclusion: CheckConclusion;
     title?: string;
     summary?: string;
+    maxRetries?: number;
+    retrySleep?: (ms: number) => Promise<void>;
   },
 ): Promise<void> {
-  await octokit.rest.checks.update({
-    owner: params.owner,
-    repo: params.repo,
-    check_run_id: params.checkRunId,
-    status: 'completed',
-    conclusion: params.conclusion,
-    ...(params.title || params.summary
-      ? { output: { title: params.title ?? params.conclusion, summary: params.summary ?? '' } }
-      : {}),
-  });
+  await withRetry(
+    () =>
+      octokit.rest.checks.update({
+        owner: params.owner,
+        repo: params.repo,
+        check_run_id: params.checkRunId,
+        status: 'completed',
+        conclusion: params.conclusion,
+        ...(params.title || params.summary
+          ? { output: { title: params.title ?? params.conclusion, summary: params.summary ?? '' } }
+          : {}),
+      }),
+    {
+      maxRetries: params.maxRetries ?? 5,
+      isRetryable: isRetryableCheckUpdateError,
+      ...(params.retrySleep ? { sleep: params.retrySleep } : {}),
+    },
+  );
 }
 
 export async function listCheckRunsForRef(

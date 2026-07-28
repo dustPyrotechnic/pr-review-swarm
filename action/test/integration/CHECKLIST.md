@@ -56,3 +56,78 @@
 5. **真正的修复**（commit `0777a30`）：在 `expert-runner.ts` 校验前，把 `coverage_complete` 严格等于字符串 `"true"`/`"false"` 的情况归一化成真正的布尔值（只处理这两个精确字符串，其它非法值仍然按校验失败处理，不放宽真正的伪造/损坏数据）。用同一份纯文档 diff 连续验证 2 次，均 `verdict=pass`、无警告。
 
 **额外发现、记录但本次未处理**：证据里 `shard_id` 是 `"diff"`——这不是真实 shard id，说明 prompt 从未把真正的 `shard_id` 告诉过模型（`buildExpertSystemPrompt`/`wrapUntrustedContent` 都没有提及），模型只能瞎编一个看起来合理的值。因为 schema 只要求 `shard_id` 是字符串（不校验取值），这不会导致校验失败，所以不在这次"`/coverage_complete must be boolean`"故障的根因范围内，但值得后续单独处理：调用方（`analyze.ts`）本来就知道真实的 `shardId`/`agentName`，没有必要依赖模型回填这两个字段。
+
+---
+
+# 对抗性测试对账（2026-07-27/28）
+
+按 `docs/plans/2026-07-27-adversarial-test-hardening-plan.md` 附录 B 的要求登记。该计划**不重复**上表 26 条，而是补齐三类空白：把"CI 配置锁定 / 人工阅读"升级为自动化断言、补上对抗性输入的零覆盖、补上不变式与资源压力。
+
+落地后规模：`action` 745 tests / 54 files（起点 305 / 38）+ 7 条 nightly 压力用例；`cli` 69 tests / 12 files（起点 35 / 9）。
+
+## 逐 Task 产出
+
+| Phase / Task | 产出 | 状态 |
+|---|---|---|
+| 0.1 统一「机器人永不提交 APPROVE」的规格表述 | `test/docs-consistency.test.ts`（2） | 完成 |
+| 1.1 Job 权限隔离 | `test/workflows/{load-workflows.ts,permissions.test.ts}`（10） | 完成 |
+| 1.2 禁止 checkout PR head | `src/lib/workflow-ref-scanner.{ts,test.ts}`（22）+ `test/workflows/no-pr-head-checkout.test.ts`（5）；`ci.yml` 的 `forbidden-pr-head-ref-scan` 改为调用扫描器 | 完成 |
+| 1.3 第三方 action pin | `test/workflows/action-pinning.test.ts`（3） | 完成 |
+| 1.4 Secret 哨兵泄漏 | `test/integration/secret-leak.test.ts`（10） | 完成 |
+| 2.1 畸形 LLM 输出语料 | `test/fixtures/malformed-llm-output/`（27 条）+ `src/lib/expert-runner.malformed.test.ts`（35） | 完成 |
+| 2.2 prompt injection 矩阵 | `test/fixtures/prompt-injection/corpus.json`（18 载荷）+ `src/prompts/data-boundary.injection.test.ts`（41）+ `test/integration/injection-e2e.test.ts`（38） | 完成（1 点未做，见下） |
+| 2.3 verifier 串通 | `test/integration/verifier-collusion.test.ts`（11） | 完成 |
+| 3.1 verdict 组合穷举 | `src/lib/verdict.test.ts` 追加块（10 条，160 组合） | 完成 |
+| 4.1 覆盖清单守恒 | `src/entrypoints/prepare.test.ts` 追加块（8） | 完成 |
+| 4.2 恶意文件名矩阵 | `test/fixtures/{gen-,}malicious-paths.*`（26 条）+ validator/locator 两侧追加 | 完成 |
+| 4.3 `introduced_by_pr` 边界 | validator 追加 8 条 + `arbiter.test.ts` 追加 4 条 | 完成 |
+| 5.1 伪造 marker 对抗 | `test/integration/forged-marker.test.ts`（7） | 完成 |
+| 5.2 finding 守恒 | `test/integration/finding-conservation.test.ts`（7） | 完成 |
+| 6.1 Check Run 竞态 | `test/integration/check-run-race.test.ts`（10） | 完成 |
+| 6.2 watchdog 边界 | `src/entrypoints/watchdog.test.ts` 追加块（8） | 完成 |
+| 7.1 nightly 通道 | `vitest.config.ts` / `vitest.stress.config.ts` / `npm run test:stress` / `.github/workflows/nightly.yml` | 完成 |
+| 7.2 超大输入压力 | `src/lib/diff-parser.stress.test.ts`（7，nightly） | 完成 |
+| 7.3 artifact 传输攻击 | `src/entrypoints/analyze.artifact-attack.test.ts`（22）+ `src/lib/artifact-reader.ts` + `schemas/analyze-artifact.schema.json` | 完成 |
+| 7.4 网络故障与退避 | `src/lib/deepseek-client.network.test.ts`（23） | 完成 |
+| 8.1 CLI key 泄漏 | `cli/src/lib/key-leak.test.mjs`（8） | 完成 |
+| 8.2 CLI 部署幂等 | `cli/src/lib/deploy-safety.test.mjs`（16） | 完成 |
+| 9.1 扩充 benchmark 用例 | — | **未做**（见"阻塞项"） |
+| 9.2 评测 CI 门槛 | `benchmarks/thresholds.json` + `run-evaluation.mjs` 门槛逻辑 | 部分完成（见"阻塞项"） |
+| 9.3 稳定性度量 | — | **未做**（见"阻塞项"） |
+
+## 测出并修复的真实缺陷（13 个）
+
+顺序即发现顺序。每一条都是先写测试变红、确认是实现问题、再改实现，没有一条是通过放宽断言变绿的。
+
+| # | 缺陷 | 位置 | 影响 | commit |
+|---|---|---|---|---|
+| 1 | 4 处第三方 action 未 pin 到完整 SHA | `reusable-pr-review.yml` 的 prepare/analyze/publish | 两处在持有 `DEEPSEEK_API_KEY` 的 Job、一处在持有 `pull-requests: write` 的 Job；可变 tag 被劫持即凭据外泄 | `ef8e315` |
+| 2 | DeepSeek key 经错误消息泄漏 | `deepseek-client` 网络错误分支 | HTTP 栈常把含 `Authorization` 头的整个请求放进 message，随后经 `stageFailureReason → core.warning` 进 job 日志（硬禁令 5） | `217ccfd` |
+| 3 | 从未调用 `core.setSecret` | `analyze.ts` | Actions 的日志遮罩根本没启用 | `217ccfd` |
+| 4 | secret-scanner 漏掉无引号赋值 | `secret-scanner.ts` | `AWS_SECRET_ACCESS_KEY=...` 这类 env 式写法完整送进 prompt（设计文档 L76） | `217ccfd` |
+| 5 | `Infinity` 绕过 schema 校验 | `deepseek-client` 的 `JSON.parse` | ajv 的 `type:"integer"` 判定放行 `Infinity`；写 artifact 时 `JSON.stringify` 静默变成 `{"line":null}` | `2475352` |
+| 6 | `side: LEFT` 被错误接受 | `deterministic-evidence-validator.ts` | 违反设计文档 L91（要求 `side: RIGHT`）；指向 pre-image 的 candidate 能成为最终 finding。该分支此前零断言 | `985767a` |
+| 7-10 | 隐藏 marker 缺发布身份校验（4 个攻击面） | `publish.ts` ×2、`summary-comment.ts` | ① 抄走 marker 让机器人闭嘴（`createReview` 0 次）② 错 digest 拖成 incomplete（拒绝服务）③ 机器人 dismiss 掉**他人**的 Review（正常协作即触发）④ 机器人改写他人评论 | `55408dc` |
+| 11 | `patchCheckConclusion` 无重试 | `check-run.ts` | 并发 PATCH 的 409 会打红整个 job，Check 卡在 `in_progress` 直到 30 分钟阈值 | `613ae7b` |
+| 12 | `commitHistoryTruncated` 被丢弃 | `watchdog.ts` 的 `run()` | 算出来后从不使用，扫描截断无任何记录（硬禁令 8 的静默截断） | `fb40c60` |
+| 13 | `setSecret` 透传含 key 的异常 | `cli/set-secret.mjs` | 只处理了非零退出，`exec` 自身抛出时原样透传 | `869f554` |
+
+另有两个"读取层零校验"缺陷（`artifact-reader` 落地前的 18 条红）与两个网络层缺陷（忽略 `Retry-After`、空响应体抛裸 `SyntaxError`），见 `fbabc48` / `a1cbd7a`；以及 CLI 部署不幂等（`git checkout -b` 在重跑时直接抛裸 git 错误），见 `869f554`。
+
+## 与计划的偏差（均以源码/真实约束为准）
+
+1. **Task 1.1** 「每个 job 都显式声明 permissions」按原样会红：`ci.yml` 走 workflow 级声明。拆成两条——信任链 workflow 要求 job 级，其余只要求不吃仓库默认权限。`ci.yml` 同样排除在 Task 1.3 的 pin 范围外（计划自身已授权）。
+2. **Task 1.1** 计划的 `checks: write` 白名单会误伤 `caller.yml` 的 `uses:` 壳 job（GitHub 要求壳 job 声明被调用方权限的并集）。改为只约束真正执行步骤的 job，另加一条更强的"壳 job 权限恰好等于被调用方并集"断言。
+3. **Task 2.1** 计划假设的 `validateExpertOutput(raw: string)` 不存在；真实导出是 `validate(schemaId, data)`，解析层在 `deepseek-client` 里。改为驱动真实客户端 + 注入 `fetchImpl`。
+4. **Task 2.1** 计划要求语料"一律拒绝"，但按真实 schema 有 3 条本就合法（`coverage-complete-string` 的归一化例外、`exp-line` 的 `1e2` 即整数 100、`maxitems-exact` 应触发 `hardLimitHit`）。强行要求它们失败等于伪造断言，故分桶处理。
+5. **Task 3.1** 计划把 `stale_cancelled` 列为 `computeVerdict` 的第四个输出值。实际 `Verdict` 只有三个值，`stale_cancelled` 是 publish 层终态（`publish.ts:50`），在身份元组不匹配时短路，不经过 `computeVerdict`。改为断言它产不出该值。
+6. **Task 4.2** 计划建议用 spy 包住 `readFileSync` 检查路径。两个被测模块根本不碰文件系统，改为源码级断言"搜不到 `node:fs`/`node:path`"——锁的是"没有读取能力"而非"这次没读到外面"。
+7. **Task 6.1** 计划把 409 与 422 并列为"按重试策略处理"。按真实语义拆开：409 是并发冲突可重试；422 表示请求不可处理，重试无意义且静默吞掉会藏起真正的载荷错误。
+8. **Task 6.2** 计划要求"摘要评论出现 commit 历史过长的降级说明"。watchdog job 没有 `issues: write`，为此扩权会违反硬禁令 6。改为 `core.warning` 写进 job 日志。
+9. **Task 7.3 / 7.4** 计划归在 nightly，归类理由是"跑得慢"。这两组是毫秒级用例，放进 PR 阻塞通道价值更高，故留在默认通道。
+
+## 阻塞项与明确不做的部分
+
+- **Task 9.1 / 9.3 未做**：`benchmarks/run-evaluation.mjs` 是个桩（`const findings = []` + TODO），从不调用 analyze 管线。在它接上真实管线之前，新增用例无从验证、稳定性无从测量。已把这件事本身诚实化：`--gate` 模式在桩状态下直接以退出码 1 拒绝给绿灯，且**刻意不**接进 `nightly.yml`（接进去只能得到恒红或恒绿，两者都没有信息量）。顺带修掉一个真实缺陷：原先的桩模式是从"命中数为 0"反推的，于是一次真实但召回率为 0 的运行会被当成桩而静默放行。
+- **Task 2.2 的第 4 点未做**（"注入载荷不会被原样写进 Review body"）：PR 描述本就不进 Review body，而 finding 的 `evidence` 进 Review body 是设计意图。为它造一条"必须转义"的规则等于凭空发明需求，**设计上不适用**。若将来确定要防"二次注入下游工具"，那是一个新需求而非现有规格的补测。
+- **计划附录 A 的 5 项仍需沙盒人工验证**，本轮未覆盖，理由不变（fork PR 的真实凭据可见性、分支保护真实拒绝 dismiss、`cancel-in-progress` 真实时序、required check 真实门禁、真实模型在注入语料下的行为）。

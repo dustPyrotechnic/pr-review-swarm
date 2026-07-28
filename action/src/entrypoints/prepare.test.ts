@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { buildPrepareArtifact, writePrepareArtifactToFile } from './prepare.js';
 import { validate } from '../lib/schema-validator.js';
+import type { RepoTreeEntry } from '../lib/context-resolver.js';
 
 const identityTuple = {
   headRepo: 'octo/head-repo',
@@ -215,5 +216,171 @@ describe('writePrepareArtifactToFile', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 覆盖清单守恒（对抗性测试加固计划 Task 4.1）
+//
+// 这是防"静默漏审"最有力的单条不变式：PR 变更的每一个文件都必须在覆盖清单里留下记录，
+// 要么被审了，要么写明为什么没审。一个文件都不能凭空消失。
+// ---------------------------------------------------------------------------
+
+const SKIPPED_TREATMENTS = [
+  'skipped_binary',
+  'skipped_generated',
+  'skipped_vendor',
+  'skipped_lockfile',
+  'skipped_budget',
+];
+
+/** 覆盖普通修改、新增、删除、重命名、二进制、生成文件、lockfile、vendor、空文件、只改 mode、submodule、symlink。 */
+function diverseFiles(): Array<{ filename: string; status: string; patch?: string }> {
+  const patch = '@@ -1,1 +1,2 @@\n a\n+b';
+  const files: Array<{ filename: string; status: string; patch?: string }> = [
+    { filename: 'src/modified.ts', status: 'modified', patch },
+    { filename: 'src/added.ts', status: 'added', patch: '@@ -0,0 +1,1 @@\n+a' },
+    { filename: 'src/removed.ts', status: 'removed', patch: '@@ -1,1 +0,0 @@\n-a' },
+    { filename: 'src/renamed-new.ts', status: 'renamed', patch },
+    { filename: 'assets/logo.png', status: 'added' },
+    { filename: 'assets/photo.jpg', status: 'modified' },
+    { filename: 'src/generated.pb.go', status: 'modified', patch },
+    { filename: 'package-lock.json', status: 'modified', patch },
+    { filename: 'pnpm-lock.yaml', status: 'modified', patch },
+    { filename: 'vendor/dep/index.js', status: 'modified', patch },
+    { filename: 'src/empty.ts', status: 'added', patch: '@@ -0,0 +0,0 @@' },
+    { filename: 'src/mode-only.sh', status: 'changed' },
+    { filename: 'third_party/sub', status: 'modified' },
+    { filename: 'src/link.ts', status: 'added' },
+  ];
+  // 补到 40 个普通文件，确保规模够大、跨多个分片。
+  for (let i = files.length; i < 40; i += 1) {
+    files.push({ filename: `src/bulk/file-${i}.ts`, status: 'modified', patch });
+  }
+  return files;
+}
+
+const diverseRepoConfig = { ignore_globs: [], generated_globs: ['**/*.pb.go'] };
+
+function buildDiverse(
+  overrides: Partial<{
+    files: Array<{ filename: string; status: string; patch?: string }>;
+    limits: { maxPrFilesPerPage: number; maxFilesPerShard: number; maxBytesPerShard: number; maxShards: number };
+  }> = {},
+) {
+  const files = overrides.files ?? diverseFiles();
+  const fullFileContents: Record<string, string> = {};
+  const tree: RepoTreeEntry[] = [];
+  for (const f of files) {
+    fullFileContents[f.filename] = 'a\nb\n';
+    tree.push({ path: f.filename, sha: `sha-${f.filename}`, type: 'blob' });
+  }
+  return buildPrepareArtifact({
+    identityTuple,
+    files,
+    fullFileContents,
+    tree,
+    repoConfig: diverseRepoConfig,
+    limits: overrides.limits ?? generousLimits,
+  });
+}
+
+describe('覆盖清单守恒', () => {
+  it('变更文件集合 == 覆盖清单记录的文件集合（一个都不能少、一个都不能多）', () => {
+    const files = diverseFiles();
+    const result = buildDiverse({ files });
+
+    const inputPaths = [...new Set(files.map((f) => f.filename))].sort();
+    const manifestPaths = [...new Set(result.artifact.coverage_manifest.files.map((f) => f.path))].sort();
+
+    expect(manifestPaths).toEqual(inputPaths);
+  });
+
+  it('覆盖清单里没有重复条目（同一文件只登记一次）', () => {
+    const manifest = buildDiverse().artifact.coverage_manifest;
+    const paths = manifest.files.map((f) => f.path);
+    expect(paths).toHaveLength(new Set(paths).size);
+  });
+
+  it('每个被跳过的文件都有非空的 skip_reason', () => {
+    const manifest = buildDiverse().artifact.coverage_manifest;
+    const skipped = manifest.files.filter((f) => SKIPPED_TREATMENTS.includes(f.treatment));
+
+    expect(skipped.length, '语料里应当确实包含被跳过的文件，否则这条断言什么都没测到').toBeGreaterThan(0);
+    for (const entry of skipped) {
+      expect(entry.skip_reason, `${entry.path} (${entry.treatment}) 缺少 skip_reason`).toBeTruthy();
+    }
+  });
+
+  it('每个被审的文件都记录了所属分片，且该分片确实包含它', () => {
+    const result = buildDiverse();
+    const reviewed = result.artifact.coverage_manifest.files.filter((f) => f.treatment === 'reviewed');
+    expect(reviewed.length).toBeGreaterThan(0);
+
+    const shardById = new Map(result.artifact.shards.map((s) => [s.id, s]));
+    for (const entry of reviewed) {
+      expect(entry.shard_id, `${entry.path} 没记录 shard_id`).toBeTruthy();
+      const shard = shardById.get(entry.shard_id);
+      expect(shard, `${entry.path} 的 shard_id=${entry.shard_id} 不存在`).toBeDefined();
+      expect(
+        shard!.files.map((f) => f.path),
+        `${entry.path} 声称属于 ${entry.shard_id}，但该分片里没有它`,
+      ).toContain(entry.path);
+    }
+  });
+
+  it('分片里出现的每个文件都在覆盖清单里有对应条目（反向守恒）', () => {
+    const result = buildDiverse();
+    const manifestPaths = new Set(result.artifact.coverage_manifest.files.map((f) => f.path));
+    for (const shard of result.artifact.shards) {
+      for (const file of shard.files) {
+        expect(manifestPaths, `分片 ${shard.id} 里的 ${file.path} 不在覆盖清单里`).toContain(file.path);
+      }
+    }
+  });
+
+  it('任一文件缺 patch → incomplete，而不是把它从清单里悄悄去掉', () => {
+    const files = [
+      { filename: 'src/ok.ts', status: 'modified', patch: '@@ -1,1 +1,2 @@\n a\n+b' },
+      { filename: 'src/no-patch.ts', status: 'modified' },
+    ];
+    const result = buildDiverse({ files });
+
+    expect(result.incomplete).toBe(true);
+    expect(result.artifact.coverage_manifest.files.map((f) => f.path)).toContain('src/no-patch.ts');
+  });
+
+  it('repo-config ignore_globs 命中的文件仍留在清单里并带 skip_reason（不是凭空消失）', () => {
+    const files = [
+      { filename: 'src/ok.ts', status: 'modified', patch: '@@ -1,1 +1,2 @@\n a\n+b' },
+      { filename: 'docs/notes.md', status: 'modified', patch: '@@ -1,1 +1,2 @@\n a\n+b' },
+    ];
+    const result = buildPrepareArtifact({
+      identityTuple,
+      files,
+      fullFileContents: { 'src/ok.ts': 'a\nb\n', 'docs/notes.md': 'a\nb\n' },
+      tree: [
+        { path: 'src/ok.ts', sha: 's1', type: 'blob' as const },
+        { path: 'docs/notes.md', sha: 's2', type: 'blob' as const },
+      ],
+      repoConfig: { ignore_globs: ['docs/**'], generated_globs: [] },
+      limits: generousLimits,
+    });
+
+    const entry = result.artifact.coverage_manifest.files.find((f) => f.path === 'docs/notes.md');
+    expect(entry, '被 ignore_globs 命中的文件不能从覆盖清单里消失').toBeDefined();
+    expect(entry!.skip_reason).toContain('ignore_globs');
+  });
+
+  it('命中分片预算上限时被挤掉的文件仍留在清单里（标记 skipped_budget，不静默丢弃）', () => {
+    const files = diverseFiles();
+    const result = buildDiverse({
+      files,
+      limits: { maxPrFilesPerPage: 3000, maxFilesPerShard: 2, maxBytesPerShard: 100, maxShards: 1 },
+    });
+
+    const manifestPaths = [...new Set(result.artifact.coverage_manifest.files.map((f) => f.path))].sort();
+    expect(manifestPaths).toEqual([...new Set(files.map((f) => f.filename))].sort());
+    expect(result.incomplete).toBe(true);
   });
 });

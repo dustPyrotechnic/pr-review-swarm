@@ -169,7 +169,7 @@ export async function run(): Promise<void> {
   const owner = core.getInput('owner', { required: true });
   const repo = core.getInput('repo', { required: true });
 
-  await runWatchdog(octokit, {
+  const results = await runWatchdog(octokit, {
     owner,
     repo,
     nowMs: Date.now(),
@@ -179,4 +179,16 @@ export async function run(): Promise<void> {
       maxPrsPerWatchdogRun: centralLimits.maxPrsPerWatchdogRun,
     },
   });
+
+  // 扫描范围被截断意味着更老 commit 上的孤儿 Check 这一轮扫不到 —— 属于硬禁令 8 说的
+  // "静默截断"，必须留下可观测记录。这里只写日志而不发摘要评论：watchdog job 只持有
+  // pull-requests: read / checks: write / actions: read，为了发评论去要 issues: write
+  // 会违反硬禁令 6（不为临时需要扩大 Job 权限）。
+  const truncated = results.filter((result) => result.commitHistoryTruncated);
+  if (truncated.length > 0) {
+    core.warning(
+      `watchdog: commit 历史过长已被截断（每 PR 上限 ${centralLimits.maxCommitsPerPrForWatchdogScan} 条），` +
+        `更早 commit 上的孤儿 Check 本轮未扫描：PR ${truncated.map((r) => `#${r.prNumber}`).join(', ')}`,
+    );
+  }
 }

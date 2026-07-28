@@ -19807,10 +19807,10 @@ Support boolean input list: \`true | True | TRUE | false | False | FALSE\``);
       (0, command_1.issueCommand)("error", (0, utils_1.toCommandProperties)(properties), message instanceof Error ? message.toString() : message);
     }
     exports2.error = error;
-    function warning3(message, properties = {}) {
+    function warning4(message, properties = {}) {
       (0, command_1.issueCommand)("warning", (0, utils_1.toCommandProperties)(properties), message instanceof Error ? message.toString() : message);
     }
-    exports2.warning = warning3;
+    exports2.warning = warning4;
     function notice(message, properties = {}) {
       (0, command_1.issueCommand)("notice", (0, utils_1.toCommandProperties)(properties), message instanceof Error ? message.toString() : message);
     }
@@ -38508,7 +38508,7 @@ async function run7() {
   const octokit = getOctokitFromInput();
   const owner = core8.getInput("owner", { required: true });
   const repo = core8.getInput("repo", { required: true });
-  await runWatchdog(octokit, {
+  const results = await runWatchdog(octokit, {
     owner,
     repo,
     nowMs: Date.now(),
@@ -38518,6 +38518,12 @@ async function run7() {
       maxPrsPerWatchdogRun: central_limits_default.maxPrsPerWatchdogRun
     }
   });
+  const truncated = results.filter((result) => result.commitHistoryTruncated);
+  if (truncated.length > 0) {
+    core8.warning(
+      `watchdog: commit \u5386\u53F2\u8FC7\u957F\u5DF2\u88AB\u622A\u65AD\uFF08\u6BCF PR \u4E0A\u9650 ${central_limits_default.maxCommitsPerPrForWatchdogScan} \u6761\uFF09\uFF0C\u66F4\u65E9 commit \u4E0A\u7684\u5B64\u513F Check \u672C\u8F6E\u672A\u626B\u63CF\uFF1APR ${truncated.map((r) => `#${r.prNumber}`).join(", ")}`
+    );
+  }
 }
 var core8;
 var init_watchdog = __esm({

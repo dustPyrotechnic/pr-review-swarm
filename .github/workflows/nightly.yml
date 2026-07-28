@@ -11,6 +11,13 @@ on:
 permissions:
   contents: read
 
+# 与 ci.yml 同因：npm registry 的 read ETIMEDOUT 抖动。
+env:
+  NPM_CONFIG_FETCH_RETRIES: '5'
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: '10000'
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: '120000'
+  NPM_CONFIG_FETCH_TIMEOUT: '600000'
+
 jobs:
   stress:
     runs-on: ubuntu-latest
@@ -23,6 +30,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: npm
+          cache-dependency-path: action/package-lock.json
       - run: npm ci
       - name: Stress and resource-pressure suite
         run: npm run test:stress

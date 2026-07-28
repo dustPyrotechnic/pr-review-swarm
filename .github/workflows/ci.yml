@@ -8,6 +8,15 @@ on:
 permissions:
   contents: read
 
+# npm registry 偶发的 read ETIMEDOUT 已经连续打红过三次 CI（a1d4850、80339b4、256d8e6），
+# 每次都是在 `npm ci` 拉包时断开，与代码无关。npm 默认只重试 2 次、退避上限 60s，对这种
+# 抖动不够。放在 workflow 级 env 里，所有 job 的 npm/npx 都继承，不用逐条改命令。
+env:
+  NPM_CONFIG_FETCH_RETRIES: '5'
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: '10000'
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: '120000'
+  NPM_CONFIG_FETCH_TIMEOUT: '600000'
+
 jobs:
   lint-typecheck-test:
     runs-on: ubuntu-latest
@@ -19,6 +28,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: npm
+          cache-dependency-path: action/package-lock.json
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
@@ -34,6 +45,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: npm
+          cache-dependency-path: cli/package-lock.json
       - run: npm ci
       - run: npm test
 
@@ -47,6 +60,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: npm
+          cache-dependency-path: action/package-lock.json
       - run: npm ci
       - run: npm run build
       - run: git add -A -- dist && git diff --cached --exit-code -- dist
@@ -144,6 +159,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: npm
+          cache-dependency-path: action/package-lock.json
       - run: npm ci
       # Replaces the previous single `grep -E 'ref:.*github\.event\.pull_request\.head'`,
       # which was bypassable by github.head_ref, format()/fromJSON() wrapping, routing

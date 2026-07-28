@@ -1,0 +1,1 @@
+{"shard_id":"shard-1","candidate_findings":[{"path":"a.ts",

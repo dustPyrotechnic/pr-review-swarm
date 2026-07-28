@@ -1,0 +1,3 @@
+```json
+{"shard_id":"shard-1","agent":"generic-security","candidate_findings":[{"id":"f1","path":"src/foo.ts","line":1,"side":"RIGHT","severity":"high","confidence":"high","category":"security","title":"t","evidence":"e","impact":"i","suggestion":"s","introduced_by_pr":true,"source_agent":"generic-security"}],"coverage_complete":true}
+```

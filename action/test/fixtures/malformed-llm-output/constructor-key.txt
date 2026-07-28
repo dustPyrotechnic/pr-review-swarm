@@ -1,0 +1,1 @@
+{"constructor":{"prototype":{"x":1}},"shard_id":"s","agent":"a","candidate_findings":[],"coverage_complete":true}

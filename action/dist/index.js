@@ -36870,6 +36870,12 @@ var init_model_allowlist = __esm({
 });
 
 // src/lib/deepseek-client.ts
+function rejectNonFiniteNumbers(_key, value) {
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    throw new NonFiniteNumberError(String(value));
+  }
+  return value;
+}
 function isRetryableStatus(status) {
   return status === 429 || status >= 500 && status < 600;
 }
@@ -36957,13 +36963,20 @@ function createDeepSeekClient(options) {
           `deepseek-client: response missing choices[0].message.tool_calls[].function(name=${SUBMIT_RESULT_FUNCTION_NAME}).arguments`
         );
       }
+      let parsed;
       try {
-        return JSON.parse(args);
-      } catch {
+        parsed = JSON.parse(args, rejectNonFiniteNumbers);
+      } catch (err) {
+        if (err instanceof NonFiniteNumberError) {
+          throw new DeepSeekResponseError(
+            `deepseek-client: tool call arguments contain a non-finite number (${err.literal})`
+          );
+        }
         throw new DeepSeekResponseError(
           "deepseek-client: tool call arguments are not valid JSON"
         );
       }
+      return parsed;
     }
   }
   async function sendStructuredRequestSafely(input) {
@@ -36983,7 +36996,7 @@ function createDeepSeekClient(options) {
   }
   return { sendStructuredRequest: sendStructuredRequestSafely };
 }
-var SUBMIT_RESULT_FUNCTION_NAME, DeepSeekTransientError, DeepSeekResponseError;
+var SUBMIT_RESULT_FUNCTION_NAME, DeepSeekTransientError, DeepSeekResponseError, NonFiniteNumberError;
 var init_deepseek_client = __esm({
   "src/lib/deepseek-client.ts"() {
     "use strict";
@@ -36991,6 +37004,12 @@ var init_deepseek_client = __esm({
     DeepSeekTransientError = class extends Error {
     };
     DeepSeekResponseError = class extends Error {
+    };
+    NonFiniteNumberError = class extends Error {
+      constructor(literal) {
+        super(`non-finite number: ${literal}`);
+        this.literal = literal;
+      }
     };
   }
 });

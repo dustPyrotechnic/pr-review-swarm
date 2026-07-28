@@ -28,6 +28,32 @@ export interface DeepSeekClient {
   sendStructuredRequest(input: StructuredRequestInput): Promise<unknown>;
 }
 
+class NonFiniteNumberError extends Error {
+  constructor(readonly literal: string) {
+    super(`non-finite number: ${literal}`);
+  }
+}
+
+/**
+ * `1e309` is syntactically valid JSON but parses to `Infinity`, which JSON
+ * cannot represent on the way back out — `JSON.stringify({line: Infinity})`
+ * silently yields `{"line":null}`. It also slips through JSON Schema
+ * validation: ajv implements `type: "integer"` as `!(data % 1) && !isNaN(data)`,
+ * and `Infinity % 1` is `NaN`, so `Infinity` validates as an integer with
+ * `minimum: 1`. A model returning `"line": 1e309` therefore produced a
+ * schema-valid candidate finding whose line number reached the analyze
+ * artifact as `null`.
+ *
+ * Rejecting at the parse boundary is the right layer: this is precisely where
+ * a JSON text can produce a JS value that cannot round-trip back to JSON.
+ */
+function rejectNonFiniteNumbers(this: unknown, _key: string, value: unknown): unknown {
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    throw new NonFiniteNumberError(String(value));
+  }
+  return value;
+}
+
 function isRetryableStatus(status: number): boolean {
   return status === 429 || (status >= 500 && status < 600);
 }
@@ -141,13 +167,20 @@ export function createDeepSeekClient(options: DeepSeekClientOptions): DeepSeekCl
         );
       }
 
+      let parsed: unknown;
       try {
-        return JSON.parse(args);
-      } catch {
+        parsed = JSON.parse(args, rejectNonFiniteNumbers);
+      } catch (err) {
+        if (err instanceof NonFiniteNumberError) {
+          throw new DeepSeekResponseError(
+            `deepseek-client: tool call arguments contain a non-finite number (${err.literal})`,
+          );
+        }
         throw new DeepSeekResponseError(
           'deepseek-client: tool call arguments are not valid JSON',
         );
       }
+      return parsed;
     }
   }
 

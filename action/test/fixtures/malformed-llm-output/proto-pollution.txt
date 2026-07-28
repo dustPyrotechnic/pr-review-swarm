@@ -1,0 +1,1 @@
+{"__proto__":{"polluted":true},"shard_id":"s","agent":"a","candidate_findings":[],"coverage_complete":true}

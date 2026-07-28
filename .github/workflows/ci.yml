@@ -82,7 +82,20 @@ jobs:
             exit 0
           fi
           ajv="npx --yes --package=ajv-cli@5.0.0 --package=ajv-formats@3.0.1 -- ajv"
-          $ajv compile -c ajv-formats -s "schemas/*.schema.json" --spec=draft7
+          # Compile each schema with every *other* schema passed as -r. A bare
+          # `-s "schemas/*.schema.json"` compiles in glob (alphabetical) order and
+          # fails on any $ref pointing at a file that sorts later — e.g.
+          # analyze-artifact -> finding. Mirror the validate loop below instead,
+          # so compilation is order-independent.
+          for schema in schemas/*.schema.json; do
+            refs=()
+            for other in schemas/*.schema.json; do
+              [ "$other" = "$schema" ] && continue
+              refs+=(-r "$other")
+            done
+            echo "compiling: $schema"
+            $ajv compile -c ajv-formats -s "$schema" "${refs[@]}" --spec=draft7
+          done
           for schema in schemas/*.schema.json; do
             name=$(basename "$schema" .schema.json)
             valid_dir="schemas/fixtures/$name"

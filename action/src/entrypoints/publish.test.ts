@@ -181,8 +181,14 @@ const reviewBatchLimits = { maxFindingsPerReviewBatch: 20, maxReviewBodyChars: 6
 
 const DEFAULT_PATCH = ['@@ -1,2 +1,3 @@', ' context line', '+added line', ' context line 2'].join('\n');
 
+// 真实 GitHub 响应里 Review / Comment 一定带 user；publish 现在按发布身份过滤隐藏 marker
+// （见 lib/publisher-identity.ts），所以 fake 也必须带上。本文件的用例讲的都是"机器人自己
+// 上一轮留下的记录"，因此默认就是发布身份。伪造 marker 的对抗用例在
+// test/integration/forged-marker.test.ts，那里每条记录的作者都是显式写明的。
+const BOT_USER = { login: 'github-actions[bot]', type: 'Bot' };
+
 function makeMockOctokit(overrides: {
-  listReviews?: Array<{ id: number; body: string | null; state?: string }>;
+  listReviews?: Array<{ id: number; body: string | null; state?: string; user?: { login: string; type: string } }>;
   listReviewComments?: Array<{ id: number; pull_request_review_id: number }>;
   files?: Array<{ filename: string; patch?: string }>;
 } = {}) {
@@ -194,7 +200,9 @@ function makeMockOctokit(overrides: {
     }),
     rest: {
       pulls: {
-        listReviews: vi.fn().mockResolvedValue({ data: overrides.listReviews ?? [] }),
+        listReviews: vi.fn().mockResolvedValue({
+          data: (overrides.listReviews ?? []).map((r) => ({ user: BOT_USER, ...r })),
+        }),
         listFiles: vi.fn().mockResolvedValue({ data: files }),
         createReview: vi.fn().mockResolvedValue({ data: { id: 1 } }),
         updateReview: vi.fn().mockResolvedValue({ data: {} }),
@@ -371,7 +379,13 @@ describe('executePublish', () => {
     const reviewSetId = first.verdictSummary.review_set_id;
 
     octokit.rest.pulls.listReviews = vi.fn().mockResolvedValue({
-      data: [{ id: 555, body: encodeBatchMarker({ reviewSetId, batchIndex: 0, batchCount: 1, digest }) }],
+      data: [
+        {
+          id: 555,
+          user: BOT_USER,
+          body: encodeBatchMarker({ reviewSetId, batchIndex: 0, batchCount: 1, digest }),
+        },
+      ],
     });
     octokit.rest.pulls.createReview = vi.fn().mockResolvedValue({ data: { id: 2 } });
 
@@ -412,7 +426,11 @@ describe('executePublish', () => {
 
     octokit.rest.pulls.listReviews = vi.fn().mockResolvedValue({
       data: [
-        { id: 555, body: encodeBatchMarker({ reviewSetId, batchIndex: 0, batchCount: 1, digest: 'wrong-digest' }) },
+        {
+          id: 555,
+          user: BOT_USER,
+          body: encodeBatchMarker({ reviewSetId, batchIndex: 0, batchCount: 1, digest: 'wrong-digest' }),
+        },
       ],
     });
     octokit.rest.pulls.createReview = vi.fn().mockResolvedValue({ data: { id: 2 } });

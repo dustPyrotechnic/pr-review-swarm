@@ -37839,6 +37839,21 @@ var init_hidden_marker = __esm({
   }
 });
 
+// src/lib/publisher-identity.ts
+function isAuthoredByPublisher(item, expectedLogin) {
+  const user = item.user;
+  if (!user)
+    return false;
+  if (expectedLogin)
+    return user.login === expectedLogin;
+  return user.type === "Bot";
+}
+var init_publisher_identity = __esm({
+  "src/lib/publisher-identity.ts"() {
+    "use strict";
+  }
+});
+
 // src/lib/inline-comment-locator.ts
 function isPointLocatable(fileDiff, line, side) {
   if (!fileDiff)
@@ -37916,14 +37931,16 @@ function buildSummaryCommentBody(ctx, verdictSummary, findings) {
   ].join("\n");
   return truncated;
 }
-async function upsertSummaryComment(octokit, ctx, body) {
+async function upsertSummaryComment(octokit, ctx, body, publisherLogin) {
   const marker = findStableMarkerId(ctx);
   const { data: comments } = await octokit.rest.issues.listComments({
     owner: ctx.owner,
     repo: ctx.repo,
     issue_number: ctx.prNumber
   });
-  const existing = comments.find((c) => c.body?.includes(marker));
+  const existing = comments.find(
+    (c) => c.body?.includes(marker) && isAuthoredByPublisher(c, publisherLogin)
+  );
   if (existing) {
     await octokit.rest.issues.updateComment({
       owner: ctx.owner,
@@ -37946,6 +37963,7 @@ var init_summary_comment = __esm({
   "src/lib/summary-comment.ts"() {
     "use strict";
     init_incomplete_banner();
+    init_publisher_identity();
     MAX_COMMENT_CHARS = 65536;
   }
 });
@@ -38069,6 +38087,8 @@ async function fetchCurrentFileDiffs(octokit, params) {
 }
 async function supersedeOldReviewSets(octokit, params) {
   const staleReviews = params.reviews.filter((review) => {
+    if (!isAuthoredByPublisher(review, params.publisherLogin))
+      return false;
     const marker = decodeBatchMarker(review.body);
     return marker !== void 0 && marker.reviewSetId !== params.currentReviewSetId;
   });
@@ -38159,7 +38179,8 @@ async function executePublish(input) {
       repo: input.repo,
       prNumber: input.prNumber,
       currentReviewSetId: reviewSetId,
-      reviews: existingReviews
+      reviews: existingReviews,
+      publisherLogin: input.publisherLogin
     });
     const currentFileDiffs = await fetchCurrentFileDiffs(input.octokit, {
       owner: input.owner,
@@ -38167,7 +38188,7 @@ async function executePublish(input) {
       prNumber: input.prNumber
     });
     const batches = planReviewBatches(input.findings, input.reviewBatchLimits);
-    const alreadyPublished = existingReviews.map((review) => decodeBatchMarker(review.body)).filter((marker) => marker !== void 0).filter((marker) => marker.reviewSetId === reviewSetId);
+    const alreadyPublished = existingReviews.filter((review) => isAuthoredByPublisher(review, input.publisherLogin)).map((review) => decodeBatchMarker(review.body)).filter((marker) => marker !== void 0).filter((marker) => marker.reviewSetId === reviewSetId);
     for (const batch of batches) {
       const existing = alreadyPublished.find((marker) => marker.batchIndex === batch.batchIndex);
       if (existing) {
@@ -38217,7 +38238,8 @@ async function executePublish(input) {
   await upsertSummaryComment(
     input.octokit,
     summaryCtx,
-    buildSummaryCommentBody(summaryCtx, result.verdictSummary, input.findings)
+    buildSummaryCommentBody(summaryCtx, result.verdictSummary, input.findings),
+    input.publisherLogin
   );
   return result;
 }
@@ -38304,6 +38326,7 @@ var init_publish = __esm({
     init_review_set_id();
     init_publish_manifest();
     init_hidden_marker();
+    init_publisher_identity();
     init_diff_parser();
     init_inline_comment_locator();
     init_retry();

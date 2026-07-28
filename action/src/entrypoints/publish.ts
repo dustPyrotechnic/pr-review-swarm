@@ -17,6 +17,7 @@ import { buildIncompleteBanner } from '../lib/incomplete-banner.js';
 import { computeReviewSetId } from '../lib/review-set-id.js';
 import { planReviewBatches, type ReviewBatch, type ReviewBatchLimits } from '../lib/publish-manifest.js';
 import { decodeBatchMarker, encodeBatchMarker } from '../lib/hidden-marker.js';
+import { isAuthoredByPublisher, type MaybeAuthored } from '../lib/publisher-identity.js';
 import { parsePatch, type ParsedFileDiff } from '../lib/diff-parser.js';
 import { isFindingLocatable } from '../lib/inline-comment-locator.js';
 import { withRetry } from '../lib/retry.js';
@@ -214,10 +215,14 @@ async function supersedeOldReviewSets(
     repo: string;
     prNumber: number;
     currentReviewSetId: string;
-    reviews: Array<{ id: number; body: string | null; state?: string }>;
+    reviews: Array<{ id: number; body: string | null; state?: string } & MaybeAuthored>;
+    publisherLogin?: string;
   },
 ): Promise<void> {
   const staleReviews = params.reviews.filter((review) => {
+    // 只取代发布身份自己上一轮留下的 Review。人类 reviewer 引用机器人正文时会把隐藏
+    // 注释一起复制走，不加这层过滤就会把人家的 Review 给 dismiss 掉。
+    if (!isAuthoredByPublisher(review, params.publisherLogin)) return false;
     const marker = decodeBatchMarker(review.body);
     return marker !== undefined && marker.reviewSetId !== params.currentReviewSetId;
   });
@@ -293,6 +298,9 @@ export interface ExecutePublishInput {
   schemaVersion: string;
   reviewBatchLimits: ReviewBatchLimits;
   defaultMention?: string;
+  // 发布身份的 login。用于把隐藏 marker 的对账范围限定在"自己发过的"记录上
+  // （见 lib/publisher-identity.ts）。不传时退回"必须是 Bot 账号"。
+  publisherLogin?: string;
   // Per-call exponential-backoff retry count for transient GitHub API errors
   // (429/5xx/network) while publishing a single batch. This is distinct from
   // the cross-run digest reconciliation above it in this file — see P2-G in
@@ -347,6 +355,7 @@ export async function executePublish(input: ExecutePublishInput): Promise<Publis
       prNumber: input.prNumber,
       currentReviewSetId: reviewSetId,
       reviews: existingReviews,
+      publisherLogin: input.publisherLogin,
     });
 
     const currentFileDiffs = await fetchCurrentFileDiffs(input.octokit, {
@@ -357,6 +366,10 @@ export async function executePublish(input: ExecutePublishInput): Promise<Publis
 
     const batches = planReviewBatches(input.findings, input.reviewBatchLimits);
     const alreadyPublished = existingReviews
+      // 隐藏 marker 是幂等键，不是控制信道：只有发布身份自己写的才算数。否则攻击者在自己的
+      // PR 上贴一条带 marker 的评论就能让本批次被跳过（机器人闭嘴），或用一个错的 digest
+      // 触发"不匹配 → incomplete 并停止发布"的保守分支（拒绝服务）。
+      .filter((review) => isAuthoredByPublisher(review, input.publisherLogin))
       .map((review) => decodeBatchMarker(review.body))
       .filter((marker): marker is NonNullable<typeof marker> => marker !== undefined)
       .filter((marker) => marker.reviewSetId === reviewSetId);
@@ -428,6 +441,7 @@ export async function executePublish(input: ExecutePublishInput): Promise<Publis
     input.octokit,
     summaryCtx,
     buildSummaryCommentBody(summaryCtx, result.verdictSummary, input.findings),
+    input.publisherLogin,
   );
 
   return result;

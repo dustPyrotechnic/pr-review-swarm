@@ -121,11 +121,20 @@ describe('buildSummaryCommentBody', () => {
   });
 });
 
-function makeMockOctokit(existingComments: Array<{ id: number; body: string }> = []) {
+// upsertSummaryComment 现在只更新发布身份自己发的那条摘要评论（见 lib/publisher-identity.ts），
+// 真实 GitHub 响应也一定带 user，所以 fake 必须补上。本文件的用例都是"机器人自己上一轮的
+// 摘要评论"，默认即发布身份；伪造 marker 的对抗用例见 test/integration/forged-marker.test.ts。
+const BOT_USER = { login: 'github-actions[bot]', type: 'Bot' };
+
+function makeMockOctokit(
+  existingComments: Array<{ id: number; body: string; user?: { login: string; type: string } }> = [],
+) {
   return {
     rest: {
       issues: {
-        listComments: vi.fn().mockResolvedValue({ data: existingComments }),
+        listComments: vi
+          .fn()
+          .mockResolvedValue({ data: existingComments.map((c) => ({ user: BOT_USER, ...c })) }),
         createComment: vi.fn().mockResolvedValue({ data: { id: 999 } }),
         updateComment: vi.fn().mockResolvedValue({ data: {} }),
       },

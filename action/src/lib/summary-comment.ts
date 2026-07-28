@@ -2,6 +2,7 @@ import type { getOctokit } from '@actions/github';
 import type { Finding } from './arbiter.js';
 import type { VerdictSummary } from '../entrypoints/publish.js';
 import { buildIncompleteBanner } from './incomplete-banner.js';
+import { isAuthoredByPublisher } from './publisher-identity.js';
 
 type Octokit = ReturnType<typeof getOctokit>;
 
@@ -89,6 +90,7 @@ export async function upsertSummaryComment(
   octokit: Octokit,
   ctx: SummaryCommentContext,
   body: string,
+  publisherLogin?: string,
 ): Promise<{ commentId: number; action: 'created' | 'updated' }> {
   const marker = findStableMarkerId(ctx);
   const { data: comments } = await octokit.rest.issues.listComments({
@@ -97,7 +99,11 @@ export async function upsertSummaryComment(
     issue_number: ctx.prNumber,
   });
 
-  const existing = comments.find((c) => c.body?.includes(marker));
+  // 稳定身份 marker 是公开可见的，任何人都能把它抄进自己的评论。只认发布身份自己发的那条，
+  // 否则机器人会去改写攻击者的评论，真正的摘要则永远不出现。
+  const existing = comments.find(
+    (c) => c.body?.includes(marker) && isAuthoredByPublisher(c, publisherLogin),
+  );
 
   if (existing) {
     await octokit.rest.issues.updateComment({

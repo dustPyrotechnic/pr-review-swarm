@@ -48,7 +48,15 @@ const DEFAULT_PATCH = ['@@ -1,2 +1,3 @@', ' context line', '+added line', ' cont
 
 function makeStatefulOctokit() {
   let nextReviewId = 1;
-  const reviews: Array<{ id: number; state: string; body: string | null; commit_id: string }> = [];
+  // 这些记录都是机器人自己 createReview 产生的，真实响应里作者就是发布身份。
+  const BOT_USER = { login: 'github-actions[bot]', type: 'Bot' };
+  const reviews: Array<{
+    id: number;
+    state: string;
+    body: string | null;
+    commit_id: string;
+    user: { login: string; type: string };
+  }> = [];
   const reviewComments: Array<{ id: number; pull_request_review_id: number; body: string }> = [];
 
   return {
@@ -65,7 +73,7 @@ function makeStatefulOctokit() {
           const id = nextReviewId++;
           const state =
             params.event === 'COMMENT' ? 'COMMENTED' : params.event === 'APPROVE' ? 'APPROVED' : 'CHANGES_REQUESTED';
-          reviews.push({ id, state, body: params.body, commit_id: params.commit_id });
+          reviews.push({ id, state, body: params.body, commit_id: params.commit_id, user: BOT_USER });
           return { data: { id } };
         }),
         dismissReview: vi.fn(async (params: { review_id: number }) => {

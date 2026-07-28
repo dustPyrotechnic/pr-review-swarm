@@ -37274,6 +37274,12 @@ function validateDeterministicEvidence(finding, filePath, fileHunks) {
   if (finding.side !== "LEFT" && finding.side !== "RIGHT") {
     return { status: "failed", reason: `invalid side: "${finding.side}"` };
   }
+  if (finding.side === "LEFT") {
+    return {
+      status: "failed",
+      reason: "side LEFT is not accepted: introduced_by_pr must be anchored to an added/modified line on the post-image (side RIGHT)"
+    };
+  }
   for (const hunk of fileHunks) {
     if (isWithinChangedHunkRange(hunk, finding.side, finding.line)) {
       return { status: "passed" };

@@ -45,6 +45,21 @@ export function validateDeterministicEvidence(
     return { status: 'failed', reason: `invalid side: "${finding.side}"` };
   }
 
+  // Design doc L91 states the rule explicitly: the line "必须落在本次 diff 的新增或修改
+  // hunk 内（`side: RIGHT` 且属于新增/修改行）". A LEFT-side location points at the
+  // pre-image — a line this PR is deleting, or an unchanged old-side line. Neither is
+  // a problem the PR introduces on the post-image that a reviewer can act on, and a
+  // regression caused by a deletion still has to be pinned to the surviving RIGHT-side
+  // code (or go through the verifier as a cross-file causal claim).
+  if (finding.side === 'LEFT') {
+    return {
+      status: 'failed',
+      reason:
+        'side LEFT is not accepted: introduced_by_pr must be anchored to an added/modified ' +
+        'line on the post-image (side RIGHT)',
+    };
+  }
+
   for (const hunk of fileHunks) {
     if (isWithinChangedHunkRange(hunk, finding.side, finding.line)) {
       return { status: 'passed' };

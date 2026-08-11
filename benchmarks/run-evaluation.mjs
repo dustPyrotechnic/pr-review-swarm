@@ -245,10 +245,19 @@ function summarize(results, stats, runDurationsMs, thresholds) {
     // 诊断用：单次 HTTP 请求的 p95。它不参与门槛判定，但在端到端延迟劣化时
     // 能立刻区分「模型变慢了」和「我们多打了几轮请求」。
     p95RequestMs: percentile(stats.latenciesMs, 95),
-    costUsdPerPr: results.length > 0 ? stats.costUsd / allRuns.length : 0,
+    costUsdPerPr: allRuns.length > 0 ? stats.costUsd / allRuns.length : 0,
     missingUsage: stats.missingUsage,
+    // 收集**所有轮次**的误报，不是只取首轮。误报门槛取的是最差一轮，若诊断
+    // 清单只看首轮，就会出现「因为误报打红、却不告诉你是哪几条」——而误报正是
+    // 这个产品最需要能立刻看到细节的指标。
+    //
+    // 按 path:line:category 去重并计出现轮次：同一条报 N 轮是稳定误报（该改
+    // prompt 或补真阴性用例），只报 1 轮是抖动（该看 max_finding_set_instability）。
     unmatched: results.flatMap((r) =>
-      r.perRun[0].unmatchedFindings.map((f) => `${r.name}: ${f.path}:${f.line} [${f.category}]`),
+      dedupeUnmatched(r).map(
+        ([key, rounds]) =>
+          `${r.name}: ${key}` + (r.perRun.length > 1 ? `（${rounds}/${r.perRun.length} 轮）` : ''),
+      ),
     ),
     thresholds,
   };
@@ -318,6 +327,25 @@ function checkThresholds(s, thresholds, args) {
   }
 
   return violations;
+}
+
+/**
+ * 把一个用例所有轮次里"对不上任何 expected"的 finding 汇总去重，
+ * 返回 [「path:line [category]」, 出现的轮次数] 列表。
+ */
+function dedupeUnmatched(result) {
+  const counts = new Map();
+  for (const perRun of result.perRun) {
+    // 同一轮内重复报同一处只算这一轮出现过一次，避免把"刷屏"记成"多轮稳定"。
+    const seenThisRun = new Set();
+    for (const f of perRun.unmatchedFindings) {
+      const key = `${f.path}:${f.line} [${f.category}]`;
+      if (seenThisRun.has(key)) continue;
+      seenThisRun.add(key);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+  return [...counts].sort((a, b) => b[1] - a[1]);
 }
 
 function mean(values) {

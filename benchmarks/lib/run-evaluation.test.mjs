@@ -204,6 +204,51 @@ describe('run-evaluation.mjs 脚本本身', () => {
     expect(code).toBe(1);
   }, 120_000);
 
+  it('只在后续轮次出现的误报，也要被打印出来', async () => {
+    // 误报门槛取「最差一轮」，但诊断清单若只取首轮，就会出现「因为误报打红、
+    // 却不告诉你是哪几条」——而误报正是这个产品最需要能立刻看到细节的指标。
+    let expertCalls = 0;
+    const baseUrl = await startMock(({ isVerifier }) => {
+      if (isVerifier) return { status: 'confirmed' };
+      expertCalls += 1;
+      // 第一轮（前 3 次 expert 调用，三个 agent）干净；之后才报一条误报。
+      if (expertCalls <= 3) {
+        return {
+          shard_id: 'shard-1',
+          agent: 'generic-correctness',
+          candidate_findings: [],
+          coverage_complete: true,
+        };
+      }
+      return {
+        shard_id: 'shard-1',
+        agent: 'generic-correctness',
+        candidate_findings: [
+          {
+            id: 'late-fp',
+            path: 'internal/scheduler/cron.go',
+            line: 31,
+            side: 'RIGHT',
+            severity: 'medium',
+            confidence: 'medium',
+            category: 'correctness',
+            title: '只在第二轮冒出来的误报',
+            evidence: '注释改动被当成了行为变更',
+            impact: '无',
+            suggestion: '无',
+            introduced_by_pr: true,
+            source_agent: 'generic-correctness',
+          },
+        ],
+        coverage_complete: true,
+      };
+    });
+
+    const { stdout } = await runScript(baseUrl, ['--case=comment-only-change', '--repeat=2']);
+
+    expect(stdout).toContain('internal/scheduler/cron.go:31');
+  }, 120_000);
+
   it('模型报出真阳性时召回率为 100%', async () => {
     const baseUrl = await startMock(({ isVerifier }) => {
       if (isVerifier) return { status: 'confirmed' };

@@ -227,7 +227,9 @@ describe('run-evaluation.mjs 脚本本身', () => {
           {
             id: 'late-fp',
             path: 'internal/scheduler/cron.go',
-            line: 31,
+            // 34（hunk 范围 30..34 的末行）而不是 31：31 是这条用例的陷阱位置，
+            // 容差 ±2 会把它正确识别成 must_not_find 命中，那就不是误报了。
+            line: 34,
             side: 'RIGHT',
             severity: 'medium',
             confidence: 'medium',
@@ -246,7 +248,7 @@ describe('run-evaluation.mjs 脚本本身', () => {
 
     const { stdout } = await runScript(baseUrl, ['--case=comment-only-change', '--repeat=2']);
 
-    expect(stdout).toContain('internal/scheduler/cron.go:31');
+    expect(stdout).toContain('internal/scheduler/cron.go:34');
   }, 120_000);
 
   it('模型报出真阳性时召回率为 100%', async () => {

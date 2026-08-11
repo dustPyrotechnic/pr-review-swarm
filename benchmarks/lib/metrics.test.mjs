@@ -30,15 +30,52 @@ describe('evaluateFindings — 召回与误报', () => {
     expect(r.falsePositives).toBe(0);
   });
 
-  it('category 不同不算命中', () => {
+  it('category 不参与匹配：位置对上就算命中', () => {
+    // 这条断言此前是反的（要求 category 精确相等），那是凭空发明的约束：
+    // `candidate-finding.schema.json` 里 category 是 `{type:string, minLength:1}`，
+    // 自由文本；设计文档 L139 明确写「severity、confidence、category 仅用于排序、
+    // 呈现和统计，不决定是否阻塞」。
+    //
+    // 代价在首轮真实评测里现形：go-missing-error-check 用例模型连续两轮报出
+    // `pkg/service/user.go:19`——正是 expected 的那一行——但 category 返回
+    // `error-handling`，于是被同时记成一次漏报和一次误报。模型答对了，评测判错了。
     const expected = [{ path: 'a.go', line: 10, category: 'security', must_find: true }];
-    const r = evaluateFindings([finding('a.go', 10, 'maintainability')], expected, {
+    const r = evaluateFindings([finding('a.go', 10, 'error-handling')], expected, {
       lineTolerance: 0,
     });
 
-    expect(r.mustFindHit).toBe(0);
-    // 报在同一位置但归错类，仍然是一条用户要读的评论 —— 算误报。
-    expect(r.falsePositives).toBe(1);
+    expect(r.mustFindHit).toBe(1);
+    expect(r.falsePositives).toBe(0);
+  });
+
+  it('模型返回整句话作为 category 时同样能匹配', () => {
+    // 实测返回过 `Race condition on delegate access`、
+    // `Eval injection / arbitrary code execution` 这类自由文本。
+    const expected = [{ path: 'a.swift', line: 33, category: 'correctness', must_find: true }];
+    const r = evaluateFindings(
+      [finding('a.swift', 33, 'Race condition on delegate access')],
+      expected,
+      { lineTolerance: 0 },
+    );
+
+    expect(r.mustFindHit).toBe(1);
+  });
+
+  it('陷阱同样只看位置：category 对不上不能让陷阱命中被漏记', () => {
+    // 这是更严重的一侧。historical-issue-not-introduced 用例里模型确实踩了陷阱
+    // （报出 helpers.ts:8 那处历史遗留的 eval），但 category 返回
+    // `Eval injection / arbitrary code execution`，于是被记成普通误报而不是陷阱
+    // 命中——`max_false_positives` 之外那条「命中 must_not_find 即报红」的门槛
+    // 因此永远不可能触发。
+    const expected = [{ path: 'a.ts', line: 8, category: 'security', must_find: false }];
+    const r = evaluateFindings(
+      [finding('a.ts', 8, 'Eval injection / arbitrary code execution')],
+      expected,
+      { lineTolerance: 0 },
+    );
+
+    expect(r.mustNotFindHit).toBe(1);
+    expect(r.falsePositives).toBe(0);
   });
 
   it('命中 must_not_find 单独计数，不重复计进 falsePositives', () => {
@@ -208,15 +245,22 @@ describe('incompleteRunFor', () => {
 });
 
 describe('findingKey', () => {
-  it('与 arbiter 的去重键一致：path|line|category', () => {
-    // 稳定性度量必须和 review_set_id 的敏感度对齐，否则"抖动 0"却仍在
-    // PR 上反复重发 Review。arbiter.ts 的 groupKey 就是这三元组。
-    expect(findingKey(finding('a.go', 7, 'security'))).toBe('a.go|7|security');
+  it('身份是 path|line', () => {
+    expect(findingKey(finding('a.go', 7, 'security'))).toBe('a.go|7');
   });
 
   it('不受 title/id 等自由文本影响', () => {
     const a = { path: 'a.go', line: 7, category: 'security', id: 'x', title: '措辞一' };
     const b = { path: 'a.go', line: 7, category: 'security', id: 'y', title: '措辞二' };
+    expect(findingKey(a)).toBe(findingKey(b));
+  });
+
+  it('也不受 category 措辞影响', () => {
+    // category 是自由文本，同一处问题模型每轮措辞可能不同（实测 error-handling /
+    // naming-clarity / duplication）。把它算进身份，抖动会恒定贴近 1.0，这条门槛
+    // 就永远红、也就永远不再提供信息。
+    const a = { path: 'a.go', line: 7, category: 'error-handling' };
+    const b = { path: 'a.go', line: 7, category: 'correctness' };
     expect(findingKey(a)).toBe(findingKey(b));
   });
 });

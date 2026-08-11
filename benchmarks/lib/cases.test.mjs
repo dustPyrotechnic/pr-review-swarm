@@ -12,8 +12,12 @@ const CASE_NAMES = readdirSync(CASES_DIR, { withFileTypes: true })
   .map((d) => d.name)
   .sort();
 
-// 三个 generic agent 的类别。expected 写了别的 category，永远不可能被命中。
-const VALID_CATEGORIES = new Set(['correctness', 'security', 'maintainability']);
+// fixture 的**书写约定**，不是系统契约：`candidate-finding.schema.json` 里
+// category 是自由文本，评测的匹配也不看它（见 metrics.mjs 的 matches）。
+// 保留这条断言只为让用例集里的说明性标签保持统一、便于阅读——绝不能反过来
+// 被读成「模型必须返回这三个词之一」，模型实测返回的是
+// `error-handling`、`Race condition on delegate access` 这类自由措辞。
+const FIXTURE_CATEGORY_VOCABULARY = new Set(['correctness', 'security', 'maintainability']);
 
 let pipeline;
 let loaded;
@@ -48,7 +52,10 @@ describe('benchmark 用例集', () => {
 
   it.each(CASE_NAMES)('%s: expected 的 category 在三个 agent 的范围内', (name) => {
     for (const e of loaded.get(name).expected) {
-      expect(VALID_CATEGORIES, `${name} 的 category "${e.category}"`).toContain(e.category);
+      expect(
+        FIXTURE_CATEGORY_VOCABULARY,
+        `${name} 的 category "${e.category}"（fixture 书写约定，不是模型契约）`,
+      ).toContain(e.category);
     }
   });
 

@@ -7,13 +7,20 @@
  */
 
 /**
- * finding 的身份键。刻意与 `action/src/lib/arbiter.ts` 的 `groupKey` 保持一致
- * （`path|line|category`）：arbiter 用它去重，`review_set_id` 的内容摘要建立在
- * 去重后的集合上。稳定性度量若用别的键，会出现"抖动 0 但 Review 仍在反复重发"
- * 这种自相矛盾的结论。
+ * finding 的身份键：`path|line`。
+ *
+ * 曾经带上 category（对齐 `arbiter.ts` 的 `groupKey`），但 category 是自由文本，
+ * 模型每轮的措辞都可能不同（实测同一处报过 `error-handling`、`naming-clarity`、
+ * `duplication`）。把措辞算进身份，抖动会恒定贴近 1.0，这条门槛就没有区分度了
+ * ——它永远红，也就永远不再提供信息。
+ *
+ * 这里度量的是「模型每次是否指出同一批位置」。要注意它**不等于**
+ * `review_set_id` 的敏感度：后者哈希的是完整 finding 内容，连 title 措辞变化都
+ * 会让它变、进而触发 Review 重发。所以抖动为 0 不代表 Review 一定不重发；措辞
+ * 层面的抖动是另一个问题，值得单独度量，但不该混进这条门槛里让它失效。
  */
 export function findingKey(finding) {
-  return `${finding.path}|${finding.line}|${finding.category}`;
+  return `${finding.path}|${finding.line}`;
 }
 
 /**
@@ -76,8 +83,25 @@ export function evaluateFindings(findings, expected, options) {
 }
 
 /**
- * 位置匹配。category 必须精确相等——同一处代码"报出来了但归错类"仍然是一条
- * 用户要读、要判断、要忽略的评论，按误报计。
+ * 位置匹配：只看 path + line（带容差），**不看 category**。
+ *
+ * category 曾经参与精确匹配，那是凭空发明的约束。真实契约是：
+ * `candidate-finding.schema.json` 里 category 是 `{type:"string", minLength:1}`
+ * ——自由文本，没有 enum；设计文档 L139 写明「severity、confidence、category
+ * 仅用于排序、呈现和统计，不决定是否阻塞」。模型实测返回过 `error-handling`、
+ * `naming-clarity`、`Race condition on delegate access`、
+ * `Eval injection / arbitrary code execution` 等等，和 expected 里写的
+ * `correctness` / `security` 自然对不上。
+ *
+ * 后果是双向的，而且第二个方向更糟：
+ *   - 真阳性侧：模型报对了行（实测连续两轮命中 expected 的那一行）却被同时记成
+ *     漏报 + 误报，召回率虚低、误报虚高。
+ *   - 真阴性侧：模型踩了陷阱却被记成普通误报，「命中 must_not_find 即报红」这条
+ *     门槛因此永远不可能触发——一条本该最灵敏的护栏被自己关掉了。
+ *
+ * expected 里的 category 保留下来只作人读的说明（这条期望的是哪类问题），不参与
+ * 判定。要收紧到「报对位置且归对类」，前提是先给 schema 加受控词表并让 arbiter
+ * 的去重键有意义，那是另一个需求。
  *
  * 行号允许 ±lineTolerance：模型指认同一个缺陷时，行号常落在函数签名行与问题行
  * 之间。精确到行会把"其实找到了"判成漏报 + 误报，双重惩罚，让召回率失真。
@@ -86,7 +110,6 @@ export function evaluateFindings(findings, expected, options) {
 function matches(finding, expectation, lineTolerance) {
   return (
     finding.path === expectation.path &&
-    finding.category === expectation.category &&
     Math.abs(finding.line - expectation.line) <= lineTolerance
   );
 }

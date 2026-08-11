@@ -274,7 +274,7 @@ function printSummary(s, stats) {
   console.log(`p95 单请求延迟    ${s.p95RequestMs} ms（诊断用，不作门槛）`);
   console.log(`成本/PR           $${s.costUsdPerPr.toFixed(4)}（${stats.requests} 次请求）`);
   if (s.unmatched.length > 0) {
-    console.log('\n未对上任何 expected 的 finding（按首轮）：');
+    console.log('\n未对上任何 expected 的 finding（含全部轮次）：');
     for (const line of s.unmatched) console.log(`    ${line}`);
   }
 }

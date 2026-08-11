@@ -166,5 +166,9 @@ Task 9.x 落地后又走了一轮自审。这一层的缺陷有个共同特征�
   - **[#9] `buildShardContent` 不给模型任何行号锚点** → 召回率 0%。三轮共 16 个候选**全部**被 `validateDeterministicEvidence` 拒绝：模型报 2/3/4/5/8/10/12/13/34/35/45，而该 hunk 的真实范围是 15..25。送给模型的内容里既没有 `@@` 头也没有行号，而校验器要求 `line` 落在 `[newStart, newStart+newLines-1]` 内——模型没有任何途径知道真实行号。这不是夹具问题：本仓库机器人审 PR #8 时同样有一条 finding 因定位不到行而降级成「未能定位到具体行」。**系统在真实 PR 上的有效召回率可能一直接近 0**，而此前无人发现——沙盒 PR #5/#6 验证的是流程能走通（Check 能终结、Review 能发出），没有对账 finding 是否落到正确位置；`analyze.test.ts` 等单测则都是注入构造好的候选，行号由测试自己给对，正好绕过这个缺口。
   - **[#10] 畸形 tool-call arguments 不重试** → incomplete 率远超 `max_incomplete_ratio: 0.1`。4 次观察里 3 次因 `deepseek-client: tool call arguments are not valid JSON` 判为 incomplete，其中两次是真实生产审核。根子是处理不一致：`ExpertOutputSchemaError` 有重试（注释自称 "empirically stochastic model-formatting glitch"），而这个归为 `DeepSeekResponseError` 不重试——「重试没有意义」对空响应体成立，对畸形 tool-call arguments 不成立。
 
-  `thresholds.json` 的六个值目前仍是计划给的先验值。#9 / #10 修掉之前跑全量评测意义不大（会先红在 #10 上，看不到召回率的真实分布），修完需要再跑一次全量并按实测结果复核：`min_recall` 定太高会天天红，定太低就没有护栏作用。
+  **两个缺陷已修并在真实模型上复测（`895c5d4` / `d548ee9`）**：`go-missing-error-check` 召回率 0% → **100%**（候选归宿从 `rejected_deterministic=16` 变为 `confirmed=5`），incomplete 比例 50% → **0%**，`historical-issue-not-introduced` 误报 3 → **0**、抖动 1.00 → **0.00**。
+
+  修 #9 的过程中还查出**第三个缺陷，在评测层自己身上**：行号修好后召回率仍是 0%，因为评测拿 `category` 做精确匹配——模型返回 `error-handling`，expected 写 `correctness`。但 `candidate-finding.schema.json` 里 category 是 `{type:"string", minLength:1}` 自由文本，设计文档 L139 也写明它「仅用于排序、呈现和统计，不决定是否阻塞」。那条匹配规则是评测自己发明的，不是系统契约。真阴性侧的后果更严重：模型确实踩了陷阱（报出 `helpers.ts:8` 那处历史遗留的 eval），却因 category 措辞不符被记成普通误报——**「命中 must_not_find 即报红」这条门槛因此永远不可能触发**，一条本该最灵敏的护栏被自己关掉了。已改为只按 path + line（带容差）匹配；`findingKey` 同理去掉 category，否则措辞抖动会让指标恒定贴近 1.0，门槛永远红也就永远不再提供信息。
+
+  `thresholds.json` 的六个值仍是先验值，尚未按实测分布复核。已知有三项超标，都是真实的产品质量信号而非管线缺陷：`swift-retain-cycle` 召回仍 0%（6 个候选里 5 个被 verifier 拒、1 个位置不对，看起来是模型能力问题）；抖动 0.5~1.0 对门槛 0.2；误报最差一轮 4 条对上限 2。定门槛前需要先跑一次全量。
 - **计划附录 A 的 5 项仍需沙盒人工验证**，本轮未覆盖，理由不变（fork PR 的真实凭据可见性、分支保护真实拒绝 dismiss、`cancel-in-progress` 真实时序、required check 真实门禁、真实模型在注入语料下的行为）。

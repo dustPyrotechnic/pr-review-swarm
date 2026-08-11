@@ -1,0 +1,8 @@
+[
+  {
+    "path": "internal/api/client.go",
+    "line": 43,
+    "category": "correctness",
+    "must_find": true
+  }
+]

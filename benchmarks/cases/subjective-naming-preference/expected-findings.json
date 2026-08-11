@@ -1,0 +1,8 @@
+[
+  {
+    "path": "internal/report/builder.go",
+    "line": 13,
+    "category": "maintainability",
+    "must_find": false
+  }
+]

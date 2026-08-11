@@ -1,0 +1,8 @@
+[
+  {
+    "path": "internal/store/search.go",
+    "line": 22,
+    "category": "security",
+    "must_find": true
+  }
+]

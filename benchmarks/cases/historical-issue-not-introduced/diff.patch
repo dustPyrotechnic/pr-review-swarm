@@ -2,7 +2,7 @@ diff --git a/src/utils/helpers.ts b/src/utils/helpers.ts
 index a1b2c3..d4e5f6 100644
 --- a/src/utils/helpers.ts
 +++ b/src/utils/helpers.ts
-@@ -1,6 +1,10 @@
+@@ -1,6 +1,9 @@
  export function formatDate(date: Date): string {
 +    return date.toISOString().split('T')[0];
 +}

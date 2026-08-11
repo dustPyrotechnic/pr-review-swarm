@@ -1,0 +1,22 @@
+diff --git a/internal/parser/tokenize.go b/internal/parser/tokenize.go
+index 1a2b3c4..5d6e7f8 100644
+--- a/internal/parser/tokenize.go
++++ b/internal/parser/tokenize.go
+@@ -40,14 +40,14 @@ func Tokenize(src string) []Token {
+ func Tokenize(src string) []Token {
+ 	var out []Token
+-	isSpace := func(r rune) bool {
+-		return r == ' ' || r == '\t' || r == '\n'
+-	}
+ 	for _, r := range src {
+ 		if isSpace(r) {
+ 			continue
+ 		}
+ 		out = append(out, tokenFor(r))
+ 	}
+ 	return out
+ }
+ 
++func isSpace(r rune) bool {
++	return r == ' ' || r == '\t' || r == '\n'
++}

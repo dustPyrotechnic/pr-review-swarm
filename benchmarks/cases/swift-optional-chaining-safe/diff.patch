@@ -1,0 +1,15 @@
+diff --git a/Sources/App/SettingsViewController.swift b/Sources/App/SettingsViewController.swift
+index 1a2b3c4..5d6e7f8 100644
+--- a/Sources/App/SettingsViewController.swift
++++ b/Sources/App/SettingsViewController.swift
+@@ -18,5 +18,10 @@ class SettingsViewController: UITableViewController {
+     private var profile: Profile?
+ 
++    func displayName() -> String {
++        guard let profile else { return "未登录" }
++        return profile.nickname ?? profile.account
++    }
++
+     override func viewWillAppear(_ animated: Bool) {
+         super.viewWillAppear(animated)
+     }

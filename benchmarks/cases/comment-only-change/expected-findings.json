@@ -1,0 +1,8 @@
+[
+  {
+    "path": "internal/scheduler/cron.go",
+    "line": 31,
+    "category": "maintainability",
+    "must_find": false
+  }
+]

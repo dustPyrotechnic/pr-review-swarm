@@ -1,0 +1,18 @@
+diff --git a/internal/auth/token.go b/internal/auth/token.go
+index 1a2b3c4..5d6e7f8 100644
+--- a/internal/auth/token.go
++++ b/internal/auth/token.go
+@@ -7,5 +7,13 @@ package auth
+ import (
+ 	"math/rand"
+ )
+ 
++func NewResetToken() string {
++	b := make([]byte, 32)
++	for i := range b {
++		b[i] = charset[rand.Intn(len(charset))]
++	}
++	return string(b)
++}
++
+ const charset = "abcdefghijklmnopqrstuvwxyz0123456789"

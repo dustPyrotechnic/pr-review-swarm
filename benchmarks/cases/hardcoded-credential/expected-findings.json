@@ -1,0 +1,8 @@
+[
+  {
+    "path": "internal/notify/webhook.go",
+    "line": 9,
+    "category": "security",
+    "must_find": true
+  }
+]

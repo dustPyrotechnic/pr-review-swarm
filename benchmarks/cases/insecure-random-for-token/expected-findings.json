@@ -1,0 +1,8 @@
+[
+  {
+    "path": "internal/auth/token.go",
+    "line": 14,
+    "category": "security",
+    "must_find": true
+  }
+]

@@ -1,0 +1,5 @@
+{
+  "_comment": "目标仓库会把 vendor/ 放进 ignore_globs；这条用例验证的正是分类器把它挡在模型之外。",
+  "ignore_globs": ["vendor/**"],
+  "generated_globs": []
+}

@@ -1,7 +1,7 @@
 [
   {
-    "path": "src/utils/helpers.ts",
-    "line": 8,
+    "path": "package-lock.json",
+    "line": 415,
     "category": "security",
     "must_find": false
   }

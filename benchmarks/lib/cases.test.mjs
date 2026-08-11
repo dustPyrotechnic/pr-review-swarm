@@ -1,0 +1,218 @@
+import { readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { loadCase, toPrepareArtifact } from './case-loader.mjs';
+import { loadPipeline } from './pipeline.mjs';
+
+const CASES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'cases');
+
+const CASE_NAMES = readdirSync(CASES_DIR, { withFileTypes: true })
+  .filter((d) => d.isDirectory())
+  .map((d) => d.name)
+  .sort();
+
+// 三个 generic agent 的类别。expected 写了别的 category，永远不可能被命中。
+const VALID_CATEGORIES = new Set(['correctness', 'security', 'maintainability']);
+
+let pipeline;
+let loaded;
+
+beforeAll(async () => {
+  pipeline = await loadPipeline();
+  loaded = new Map(CASE_NAMES.map((name) => [name, loadCase(join(CASES_DIR, name))]));
+}, 60_000);
+
+/**
+ * 用例集自身的守恒检查。
+ *
+ * 一条写错的 fixture 不会报错，它只会安静地拉低召回率——然后有人去调 prompt，
+ * 试图修一个根本不在模型那边的问题。这一组测试把"用例写错"和"模型变差"分开。
+ */
+describe('benchmark 用例集', () => {
+  it('至少有 20 个用例', () => {
+    expect(CASE_NAMES.length).toBeGreaterThanOrEqual(20);
+  });
+
+  it('真阴性用例数不少于真阳性（计划要求的 1:1 误报陷阱密度）', () => {
+    let positives = 0;
+    let negatives = 0;
+    for (const c of loaded.values()) {
+      if (c.expected.some((e) => e.must_find)) positives += 1;
+      else negatives += 1;
+    }
+
+    // 只堆真阳性会让召回率好看，而误报率——这个产品真正的死因——无人度量。
+    expect(negatives).toBeGreaterThanOrEqual(positives);
+  });
+
+  it.each(CASE_NAMES)('%s: expected 的 category 在三个 agent 的范围内', (name) => {
+    for (const e of loaded.get(name).expected) {
+      expect(VALID_CATEGORIES, `${name} 的 category "${e.category}"`).toContain(e.category);
+    }
+  });
+
+  it.each(CASE_NAMES)('%s: diff 能被生产 parsePatch 解析出内容', (name) => {
+    const c = loaded.get(name);
+    expect(c.files.length).toBeGreaterThan(0);
+
+    for (const f of c.files) {
+      const parsed = pipeline.parsePatch(f.path, f.patch);
+      if (f.patch === '') {
+        // 纯 rename / 二进制：没有 hunk 是正确的。
+        expect(parsed.hunks).toEqual([]);
+      } else {
+        expect(parsed.hunks.length, `${name} 的 ${f.path}`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it.each(CASE_NAMES)('%s: 每个 @@ 头声明的行数与 hunk 实际行数一致', (name) => {
+    // 确定性证据校验器按 `newStart + newLines - 1` 卡上界，所以 newLines 少写一行，
+    // hunk 最后一行就会被判成「不属于本次 diff 修改的范围」。这类错误不报错、
+    // 不影响解析、只会让某些 expected 永远无法命中 —— 表现为召回率莫名偏低。
+    //
+    // 这条断言覆盖全部用例，包括那些会被分类器跳过的（lockfile / vendor /
+    // 生成文件）：它们不走行号校验，正因如此才最容易把计数错误藏到没人看见。
+    for (const file of loaded.get(name).files) {
+      if (file.patch === '') continue;
+
+      for (const hunk of splitHunks(file.patch)) {
+        const declared = /^@@ -(\d+),(\d+) \+(\d+),(\d+) @@/.exec(hunk.header);
+        expect(declared, `${name} 的 ${file.path}: hunk 头缺少行数 → ${hunk.header}`).not.toBeNull();
+
+        const actualOld = hunk.context + hunk.deleted;
+        const actualNew = hunk.context + hunk.added;
+        expect(
+          [Number(declared[2]), Number(declared[4])],
+          `${name} 的 ${file.path} @@ ${hunk.header}：声明 old=${declared[2]} new=${declared[4]}，` +
+            `实际 old=${actualOld} new=${actualNew}`,
+        ).toEqual([actualOld, actualNew]);
+      }
+    }
+  });
+
+  it.each(CASE_NAMES)('%s: must_find 的行号必须能通过确定性证据校验', (name) => {
+    const c = loaded.get(name);
+    const mustFind = c.expected.filter((e) => e.must_find);
+    if (mustFind.length === 0) return;
+
+    for (const e of mustFind) {
+      const file = c.files.find((f) => f.path === e.path);
+      const hunks = pipeline.parsePatch(file.path, file.patch).hunks;
+      const result = pipeline.validateDeterministicEvidence(
+        { path: e.path, line: e.line, side: 'RIGHT' },
+        e.path,
+        hunks,
+      );
+
+      // 校验器挡掉的行，模型就算报对了也进不了 findings——这条用例是死的，
+      // 只会永远贡献一次漏报。
+      expect(result.status, `${name} expected ${e.path}:${e.line} → ${result.reason ?? ''}`).toBe(
+        'passed',
+      );
+    }
+  });
+
+  it.each(CASE_NAMES)('%s: must_not_find 要么落在可审范围内，要么该文件本就被跳过', (name) => {
+    const c = loaded.get(name);
+    const trap = c.expected.filter((e) => !e.must_find);
+    if (trap.length === 0) return;
+
+    const artifact = buildArtifact(c);
+    const reviewedPaths = new Set(
+      artifact.coverage_manifest.files.filter((f) => f.treatment === 'reviewed').map((f) => f.path),
+    );
+
+    for (const e of trap) {
+      if (!reviewedPaths.has(e.path)) {
+        // 被分类器跳过（lockfile / vendor / 生成文件 / 纯 rename）——
+        // 陷阱由"根本不送给模型"这条路径守住，不需要行号落在 hunk 内。
+        continue;
+      }
+      const file = c.files.find((f) => f.path === e.path);
+      const hunks = pipeline.parsePatch(file.path, file.patch).hunks;
+      const result = pipeline.validateDeterministicEvidence(
+        { path: e.path, line: e.line, side: 'RIGHT' },
+        e.path,
+        hunks,
+      );
+
+      // 一个"模型物理上报不出来"的陷阱不构成任何证据。它必须是可达的，
+      // 否则这条真阴性用例只是在给自己发免费的及格分。
+      expect(result.status, `${name} 陷阱 ${e.path}:${e.line} → ${result.reason ?? ''}`).toBe(
+        'passed',
+      );
+    }
+  });
+
+  it.each(CASE_NAMES)('%s: 能组装出可被 runAnalysis 消费的 artifact', (name) => {
+    const artifact = buildArtifact(loaded.get(name));
+
+    expect(artifact.identity_tuple.head_sha).toMatch(/^[0-9a-f]{40}$/);
+    expect(artifact.coverage_manifest.hard_limit_hit).toBe(false);
+    // 覆盖清单守恒：diff 里的每个文件都要留痕，不管审没审。
+    const manifestPaths = artifact.coverage_manifest.files.map((f) => f.path).sort();
+    const diffPaths = loaded.get(name).files.map((f) => f.path).sort();
+    expect(manifestPaths).toEqual(diffPaths);
+  });
+
+  it('被分类器跳过的用例确实走的是跳过路径，而不是碰巧没有 hunk', () => {
+    const expectations = [
+      ['lockfile-only-change', 'package-lock.json', 'skipped_lockfile'],
+      ['vendor-dependency-update', 'vendor/github.com/pkg/errors/errors.go', 'skipped_vendor'],
+      ['generated-file-changed', 'api/gen/service.pb.go', 'skipped_generated'],
+    ];
+
+    for (const [name, path, treatment] of expectations) {
+      const artifact = buildArtifact(loaded.get(name));
+      const entry = artifact.coverage_manifest.files.find((f) => f.path === path);
+      expect(entry?.treatment, `${name} → ${path}`).toBe(treatment);
+    }
+  });
+
+  it('被跳过的文件不会出现在任何 shard 里（不送给模型）', () => {
+    for (const name of ['lockfile-only-change', 'vendor-dependency-update', 'generated-file-changed']) {
+      const artifact = buildArtifact(loaded.get(name));
+      const shardedPaths = artifact.shards.flatMap((s) => s.files.map((f) => f.path));
+      expect(shardedPaths, name).toEqual([]);
+    }
+  });
+});
+
+/**
+ * 把一份单文件 patch 正文切成若干 hunk，并数出各类行数。
+ * 刻意不复用 parsePatch —— 它只认 newStart、根本不读声明的行数，
+ * 用它来验证行数等于用被测对象给自己打分。
+ */
+function splitHunks(patch) {
+  const hunks = [];
+  let current;
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('@@')) {
+      current = { header: line, context: 0, added: 0, deleted: 0 };
+      hunks.push(current);
+      continue;
+    }
+    if (!current) continue;
+    // "\ No newline at end of file" 不是一条 diff 行。
+    if (line.startsWith('\\')) continue;
+    if (line.startsWith('+')) current.added += 1;
+    else if (line.startsWith('-')) current.deleted += 1;
+    else current.context += 1;
+  }
+  return hunks;
+}
+
+function buildArtifact(c) {
+  return toPrepareArtifact(c, {
+    parsePatch: pipeline.parsePatch,
+    shardFiles: pipeline.shardFiles,
+    classifyFile: pipeline.classifyFile,
+    limits: {
+      maxFilesPerShard: pipeline.centralLimits.maxFilesPerShard,
+      maxBytesPerShard: pipeline.centralLimits.maxBytesPerShard,
+      maxShards: pipeline.centralLimits.maxShardsPerRun,
+    },
+  });
+}

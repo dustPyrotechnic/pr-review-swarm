@@ -1,0 +1,8 @@
+[
+  {
+    "path": "Sources/App/ProfileViewController.swift",
+    "line": 24,
+    "category": "correctness",
+    "must_find": true
+  }
+]

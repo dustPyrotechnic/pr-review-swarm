@@ -1,0 +1,8 @@
+[
+  {
+    "path": "vendor/github.com/pkg/errors/errors.go",
+    "line": 53,
+    "category": "maintainability",
+    "must_find": false
+  }
+]

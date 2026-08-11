@@ -15,7 +15,7 @@ index abc123..def456 100644
      func setupUI() {
          let label = UILabel()
          label.text = "Hello"
-@@ -20,3 +26,12 @@ class ViewController: UIViewController {
+@@ -20,4 +26,13 @@ class ViewController: UIViewController {
  class DataLoader {
      var delegate: DataLoaderDelegate?
      

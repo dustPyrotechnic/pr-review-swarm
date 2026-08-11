@@ -1,7 +1,7 @@
 [
   {
-    "path": "src/utils/helpers.ts",
-    "line": 8,
+    "path": "internal/crypto/legacy.go",
+    "line": 22,
     "category": "security",
     "must_find": false
   }

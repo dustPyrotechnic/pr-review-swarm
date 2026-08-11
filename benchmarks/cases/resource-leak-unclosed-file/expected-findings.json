@@ -1,0 +1,8 @@
+[
+  {
+    "path": "internal/importer/csv.go",
+    "line": 17,
+    "category": "correctness",
+    "must_find": true
+  }
+]

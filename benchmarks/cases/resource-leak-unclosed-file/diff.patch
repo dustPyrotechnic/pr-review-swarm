@@ -1,0 +1,22 @@
+diff --git a/internal/importer/csv.go b/internal/importer/csv.go
+index 1a2b3c4..5d6e7f8 100644
+--- a/internal/importer/csv.go
++++ b/internal/importer/csv.go
+@@ -14,5 +14,17 @@ func ImportAll(paths []string) error {
+ 	var total int
+ 
++	for _, p := range paths {
++		f, err := os.Open(p)
++		if err != nil {
++			return err
++		}
++		n, err := importReader(f)
++		if err != nil {
++			return err
++		}
++		total += n
++	}
++
+ 	log.Printf("imported %d rows", total)
+ 	return nil
+ }

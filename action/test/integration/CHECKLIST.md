@@ -115,7 +115,7 @@
 
 另有两个"读取层零校验"缺陷（`artifact-reader` 落地前的 18 条红）与两个网络层缺陷（忽略 `Retry-After`、空响应体抛裸 `SyntaxError`），见 `fbabc48` / `a1cbd7a`；以及 CLI 部署不幂等（`git checkout -b` 在重跑时直接抛裸 git 错误），见 `869f554`。
 
-## 评测层自审发现并修复的缺陷（2026-08-05，6 个）
+## 评测层自审发现并修复的缺陷（2026-08-05，6 个 + 机器人补 2 个）
 
 Task 9.x 落地后又走了一轮自审。这一层的缺陷有个共同特征：**不报错、不影响解析，只让指标悄悄失真**——正是回归评测最容易变成摆设的方式。
 
@@ -129,6 +129,17 @@ Task 9.x 落地后又走了一轮自审。这一层的缺陷有个共同特征�
 | 6 | 多个 vitest worker 并发写同一个 esbuild bundle | `benchmarks/lib/pipeline.mjs` | 一个 worker 会 require 到另一个正写到一半的产物，报 `Unexpected end of input`——随机红、换台机器复现不了。第一次用 `process.pid` 隔离**没有修好**：vitest 默认的 worker 池是 `worker_threads`，多个 worker 是同一进程里的线程，pid 完全相同。改用随机后缀后 8 次连跑稳定 |
 
 另外补了两处健壮性：`toPrepareArtifact` 的 `classifyFile` 从「可选、缺失则全部按 reviewed 处理」改为必传（缺失即抛错）——那个兜底一旦被忘掉，lockfile / vendor / 生成文件会统统送进模型，那几条误报陷阱用例静默失效而指标看着正常；以及 `run-evaluation.mjs` 主流程此前一行都没被执行过（缺 key 时首步即退出），新增 `--base-url` 与 `lib/run-evaluation.test.mjs`，对着本地 mock 跑完整流程（参数解析、指标汇总、六道门槛、退出码、上游 500 → incomplete），不花钱也不依赖网络。
+
+### 机器人自己审出来的 2 条（PR #8，2026-08-11）
+
+本仓库的 PR Review Swarm 审了这个 PR，给出 2 条 finding，逐条核过**都成立**，已在 `c7b3d63` 落实。值得单独记一笔：这是机器人第一次在真实 PR 上给出经得起复核的意见。
+
+| # | 缺陷 | 位置 | 影响 |
+|---|---|---|---|
+| 7 | 空白 `DEEPSEEK_API_KEY` 未被视为缺失 | `benchmarks/run-evaluation.mjs` | workflow 里写的是 `${{ secrets.DEEPSEEK_API_KEY }}`：仓库没配时展开成空串（`!apiKey` 能挡住），但配错成一串空格时挡不住，会带着无效凭据一路跑到 API 调用才失败——报出来的是「上游 401」，掩盖了真正的原因「你没配 key」 |
+| 8 | 单轮 `runAnalysis` 抛异常会中断整轮评测 | `benchmarks/run-evaluation.mjs` | `runAnalysis` 把绝大多数故障降级成 `anyRequiredStageFailed`，但不是全部（verifier 抛出的非 `VerifierUnavailableError` 会原样上抛）。让它冒到最外层，已跑完的用例指标一并丢失，输出里只剩一句「评测执行失败」，无法分辨是脚本坏了还是被测系统在某个用例上炸了。改为记成一轮 incomplete：门槛照样红，但带着用例名、轮次和原因 |
+
+顺带把 incomplete 的判据从脚本挪进 `lib/metrics.mjs`（`isIncompleteRun` / `incompleteRunFor`）——「什么算一次完整审核」和召回率怎么算是同一层语义，该和其他指标规则一起被测试。缺陷 8 的防御分支很难从 HTTP mock 触发（管线内部几乎全降级了），把结果构造抽成纯函数之后可以直接单测形状：漏掉 `anyRequiredStageFailed` 会让一次抛异常的运行被当成「干净的零 finding 审核」，那正是最危险的静默通过。
 
 ## 与计划的偏差（均以源码/真实约束为准）
 
@@ -150,5 +161,10 @@ Task 9.x 落地后又走了一轮自审。这一层的缺陷有个共同特征�
 
 - **Task 9.1 / 9.3 的阻塞项已解除**（2026-08-05）：`run-evaluation.mjs` 原先是个桩（`const findings = []` + TODO），从不调用 analyze 管线；新增用例无从验证、稳定性无从测量。现已接上真实管线——`benchmarks/lib/pipeline.mjs` 用 action 自己的 esbuild 把 `action/src` 现场打成 bundle，评测跑的是和 `npm run build` 同一份源码，而不是一套为了好测而写的平行实现。`--gate` 在缺 `DEEPSEEK_API_KEY` 时仍然直接失败，不退化成恒绿空跑。
 - **Task 2.2 的第 4 点未做**（"注入载荷不会被原样写进 Review body"）：PR 描述本就不进 Review body，而 finding 的 `evidence` 进 Review body 是设计意图。为它造一条"必须转义"的规则等于凭空发明需求，**设计上不适用**。若将来确定要防"二次注入下游工具"，那是一个新需求而非现有规格的补测。
-- **回归评测从未用真实模型跑过**：接线由 `end-to-end.test.mjs`（fake LLM 驱动真实 `runAnalysis`）与 `cases.test.mjs`（用生产的 `parsePatch` / `classifyFile` / 确定性校验器验证全部 27 个用例）证实，但**首轮真实指标尚未产生**——本机没有 `DEEPSEEK_API_KEY`。`thresholds.json` 里的六个门槛值目前是计划给的先验值，不是从实测分布里定出来的。中央仓库配好 secret、nightly 首次跑通之后，需要按实测结果复核一遍门槛：`min_recall` 定太高会天天红，定太低就没有护栏作用。
+- **首轮真实模型评测已跑过（2026-08-11），查出两个生产缺陷，门槛值仍待复核**：在中央仓库用真实 `DEEPSEEK_API_KEY` 跑通（`go-missing-error-check`，2 轮 + 3 轮）。评测机制本身工作正常——secret 可读、esbuild bundle 在 CI 能构建、真实 API 能通、六个指标都算得出来、计量层正常（$0.0023 / 5 次请求）。但指标本身是坏的，原因不在评测层：
+
+  - **[#9] `buildShardContent` 不给模型任何行号锚点** → 召回率 0%。三轮共 16 个候选**全部**被 `validateDeterministicEvidence` 拒绝：模型报 2/3/4/5/8/10/12/13/34/35/45，而该 hunk 的真实范围是 15..25。送给模型的内容里既没有 `@@` 头也没有行号，而校验器要求 `line` 落在 `[newStart, newStart+newLines-1]` 内——模型没有任何途径知道真实行号。这不是夹具问题：本仓库机器人审 PR #8 时同样有一条 finding 因定位不到行而降级成「未能定位到具体行」。**系统在真实 PR 上的有效召回率可能一直接近 0**，而此前无人发现——沙盒 PR #5/#6 验证的是流程能走通（Check 能终结、Review 能发出），没有对账 finding 是否落到正确位置；`analyze.test.ts` 等单测则都是注入构造好的候选，行号由测试自己给对，正好绕过这个缺口。
+  - **[#10] 畸形 tool-call arguments 不重试** → incomplete 率远超 `max_incomplete_ratio: 0.1`。4 次观察里 3 次因 `deepseek-client: tool call arguments are not valid JSON` 判为 incomplete，其中两次是真实生产审核。根子是处理不一致：`ExpertOutputSchemaError` 有重试（注释自称 "empirically stochastic model-formatting glitch"），而这个归为 `DeepSeekResponseError` 不重试——「重试没有意义」对空响应体成立，对畸形 tool-call arguments 不成立。
+
+  `thresholds.json` 的六个值目前仍是计划给的先验值。#9 / #10 修掉之前跑全量评测意义不大（会先红在 #10 上，看不到召回率的真实分布），修完需要再跑一次全量并按实测结果复核：`min_recall` 定太高会天天红，定太低就没有护栏作用。
 - **计划附录 A 的 5 项仍需沙盒人工验证**，本轮未覆盖，理由不变（fork PR 的真实凭据可见性、分支保护真实拒绝 dismiss、`cancel-in-progress` 真实时序、required check 真实门禁、真实模型在注入语料下的行为）。

@@ -37,4 +37,4 @@ jobs:
         working-directory: benchmarks
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        run: node run-evaluation.mjs --case=go-missing-error-check --repeat=2
+        run: node run-evaluation.mjs --case=go-missing-error-check --repeat=3

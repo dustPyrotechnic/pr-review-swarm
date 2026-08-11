@@ -185,6 +185,31 @@ function printCase(r) {
       if (run.stageFailureReason) console.log(`      ${run.stageFailureReason}`);
     }
   }
+
+  // 召回率为 0 时，「模型压根没报」和「模型报了但被某一层拒掉」是两个完全
+  // 不同的问题——前者要调 prompt/skill，后者要查管线。internalDiagnostics
+  // 正好记着每个候选的归宿，不打出来就只能靠猜。
+  if (recall < 1) {
+    const outcomes = new Map();
+    for (const run of r.runs) {
+      for (const d of run.internalDiagnostics ?? []) {
+        outcomes.set(d.outcome, (outcomes.get(d.outcome) ?? 0) + 1);
+      }
+    }
+    if (outcomes.size === 0) {
+      console.log('  ↳ 模型没有产出任何候选 finding（不是被管线拒掉的）');
+    } else {
+      const summary = [...outcomes].map(([k, v]) => `${k}=${v}`).join(' ');
+      console.log(`  ↳ 候选归宿：${summary}`);
+      for (const run of r.runs) {
+        for (const d of run.internalDiagnostics ?? []) {
+          if (d.outcome !== 'confirmed' && d.reason) {
+            console.log(`      ${d.path}:${d.line} ${d.outcome} — ${d.reason}`);
+          }
+        }
+      }
+    }
+  }
   console.log();
 }
 

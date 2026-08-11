@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createDeepSeekClient,
+  DeepSeekMalformedResultError,
   DeepSeekTransientError,
   DeepSeekResponseError,
 } from './deepseek-client.js';
@@ -101,7 +102,7 @@ describe('createDeepSeekClient / sendStructuredRequest', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it('does not retry when the tool call arguments are not valid JSON', async () => {
+  it('does not retry at the client layer when the tool call arguments are not valid JSON', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse(200, {
         choices: [
@@ -111,8 +112,13 @@ describe('createDeepSeekClient / sendStructuredRequest', () => {
     );
     const client = createDeepSeekClient({ apiKey: 'key', fetchImpl, sleep: async () => {} });
 
+    // Distinct type, because this failure *is* worth retrying — just not here.
+    // The client's own maxRetries budget is for transport (network errors,
+    // 429/5xx); spending it on a model-formatting glitch would silently
+    // multiply every caller's request count. The retry lives one layer up, in
+    // expert-runner's maxSchemaRetries, where it's explicit and configurable.
     await expect(client.sendStructuredRequest(baseInput)).rejects.toBeInstanceOf(
-      DeepSeekResponseError,
+      DeepSeekMalformedResultError,
     );
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });

@@ -95,15 +95,39 @@ function skillsForAgent(
   return triggered.map((e) => loadSkillFn(e.name)).filter((s) => s.meta.category === category);
 }
 
-function buildShardContent(shard: PrepareShard): string {
+// Width of the line-number gutter. Wide enough for six-digit files; anything
+// longer just shifts the marker right, which costs nothing.
+const LINE_NO_WIDTH = 6;
+
+/**
+ * Renders the diff the experts actually see.
+ *
+ * Every post-image line carries its real line number. This is not cosmetic:
+ * `validateDeterministicEvidence` rejects any finding whose `line` falls
+ * outside `[hunk.newStart, hunk.newStart + hunk.newLines - 1]`, so a model that
+ * cannot see real line numbers cannot produce an acceptable finding. Before
+ * this gutter existed the shard content had no `@@` header and no numbers at
+ * all — the model counted from 1 within the text it was shown, and its
+ * candidates were rejected in bulk (16/16 in the first real benchmark run,
+ * reported as #9).
+ *
+ * Deleted lines deliberately get no number: they don't exist in the post-image,
+ * and findings must anchor to `side: RIGHT`. Printing the old-side number there
+ * would invite the model to anchor to a position the validator always rejects.
+ */
+export function buildShardContent(shard: PrepareShard): string {
   return shard.files
     .map((file) => {
       const hunkText = file.hunks
         .map((hunk) =>
           hunk.lines
             .map((line) => {
-              const marker = line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' ';
-              return `${marker}${line.content}`;
+              if (line.type === 'del') {
+                return `${' '.repeat(LINE_NO_WIDTH)} -${line.content}`;
+              }
+              const marker = line.type === 'add' ? '+' : ' ';
+              const lineNo = String(line.newLine ?? '').padStart(LINE_NO_WIDTH);
+              return `${lineNo} ${marker}${line.content}`;
             })
             .join('\n'),
         )

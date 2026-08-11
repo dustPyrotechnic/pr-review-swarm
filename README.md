@@ -14,7 +14,7 @@
 ├── action/              # 中央 custom action 源码（prepare/analyze/publish/finalize 入口）+ 预构建 dist/
 ├── skills/              # Agent 可装备的 Markdown 审核 checklist
 ├── schemas/             # candidate finding / finding 的 JSON Schema
-├── benchmarks/          # 回归评测用例
+├── benchmarks/          # 回归评测：用例集 + 指标门槛（nightly 跑，需 DEEPSEEK_API_KEY）
 ├── scripts/             # 维护脚本（repin / release / 一致性校验）
 └── .github/workflows/   # reusable workflow
 ```

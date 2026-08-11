@@ -92,6 +92,39 @@ function matches(finding, expectation, lineTolerance) {
 }
 
 /**
+ * 一轮运行是否算 incomplete。判据与 analyze → verdict 的实际口径一致：任一必需
+ * 阶段失败，或触到任一硬上限，都不允许被当作一次完整审核。
+ *
+ * 放在指标模块里而不是脚本里：这是「什么算一次完整审核」的口径定义，和召回率
+ * 怎么算是同一层的东西，需要和其他指标规则一起被测试。
+ */
+export function isIncompleteRun(run) {
+  return Boolean(run.anyRequiredStageFailed) || Boolean(run.coverageManifest?.hard_limit_hit);
+}
+
+/**
+ * 把「runAnalysis 抛出异常」这件事表示成一轮 incomplete 的运行结果。
+ *
+ * runAnalysis 把绝大多数故障降级成 anyRequiredStageFailed，但不是全部（例如
+ * verifier 抛出的非 VerifierUnavailableError 会原样上抛）。让异常冒到最外层会
+ * 中断整轮评测：已经跑完的用例指标一并丢失，输出里只剩一句「评测执行失败」，
+ * 无法分辨是脚本坏了还是被测系统在某个用例上炸了。
+ *
+ * 记成 incomplete 之后，incomplete_ratio 门槛照样会红——不是把问题藏起来，而是
+ * 让它带着用例名、轮次和原因一起浮出来。
+ */
+export function incompleteRunFor(artifact, err) {
+  return {
+    findings: [],
+    coverageManifest: artifact.coverage_manifest,
+    hardLimitHit: false,
+    anyRequiredStageFailed: true,
+    internalDiagnostics: [],
+    stageFailureReason: `runAnalysis 抛出异常：${err instanceof Error ? err.message : String(err)}`,
+  };
+}
+
+/**
  * Task 9.3：同一用例连跑 N 次，finding 集合两两 Jaccard 距离的均值。
  *
  * 抖动大意味着 `review_set_id` 会频繁变化，PR 上就会反复 dismiss 旧 Review、

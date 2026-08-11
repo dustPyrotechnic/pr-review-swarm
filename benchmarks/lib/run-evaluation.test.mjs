@@ -101,6 +101,26 @@ describe('run-evaluation.mjs 脚本本身', () => {
     expect(stderr).toContain('DEEPSEEK_API_KEY');
   }, 60_000);
 
+  it('DEEPSEEK_API_KEY 是纯空白时同样判为缺失', async () => {
+    // workflow 里写的是 ${{ secrets.DEEPSEEK_API_KEY }}。配错成一串空格时
+    // `!apiKey` 为 false，会带着无效凭据跑到 API 调用才失败——报出来的是
+    // 「上游 401」，掩盖了真正的原因「你没配 key」。
+    const { code, stderr } = await (async () => {
+      try {
+        const { stdout } = await execFileAsync(process.execPath, [SCRIPT, '--gate'], {
+          cwd: BENCHMARKS_DIR,
+          env: { ...process.env, DEEPSEEK_API_KEY: '   ' },
+        });
+        return { code: 0, stdout };
+      } catch (err) {
+        return { code: err.code, stderr: err.stderr ?? '' };
+      }
+    })();
+
+    expect(code).toBe(1);
+    expect(stderr).toContain('DEEPSEEK_API_KEY');
+  }, 60_000);
+
   it('零 finding 的真阴性用例：跑通全流程且门槛通过', async () => {
     const baseUrl = await startMock(({ isVerifier, body }) =>
       isVerifier ? { status: 'confirmed' } : emptyExpertOutput(body),

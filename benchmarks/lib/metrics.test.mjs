@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateFindings, findingKey, findingSetInstability } from './metrics.mjs';
+import {
+  evaluateFindings,
+  findingKey,
+  findingSetInstability,
+  incompleteRunFor,
+  isIncompleteRun,
+} from './metrics.mjs';
 
 function finding(path, line, category = 'correctness') {
   return { path, line, category, id: `${path}:${line}`, title: 't' };
@@ -150,6 +156,54 @@ describe('findingSetInstability — Task 9.3 抖动度量', () => {
     const a = [finding('a.go', 1), finding('a.go', 1)];
     const b = [finding('a.go', 1)];
     expect(findingSetInstability([a, b])).toBe(0);
+  });
+});
+
+describe('isIncompleteRun', () => {
+  const clean = { anyRequiredStageFailed: false, coverageManifest: { hard_limit_hit: false } };
+
+  it('干净的一轮不算 incomplete', () => {
+    expect(isIncompleteRun(clean)).toBe(false);
+  });
+
+  it('必需阶段失败算 incomplete', () => {
+    expect(isIncompleteRun({ ...clean, anyRequiredStageFailed: true })).toBe(true);
+  });
+
+  it('触到硬上限算 incomplete', () => {
+    expect(isIncompleteRun({ ...clean, coverageManifest: { hard_limit_hit: true } })).toBe(true);
+  });
+
+  it('缺 coverageManifest 时不炸，按未触上限处理', () => {
+    expect(isIncompleteRun({ anyRequiredStageFailed: false })).toBe(false);
+  });
+});
+
+describe('incompleteRunFor', () => {
+  const artifact = { coverage_manifest: { files: [], hard_limit_hit: false } };
+
+  it('产出的结果会被 isIncompleteRun 识别为 incomplete', () => {
+    const run = incompleteRunFor(artifact, new Error('boom'));
+
+    // 若形状不对（比如漏了 anyRequiredStageFailed），一次抛异常的运行会被
+    // 当成「干净的零 finding 审核」——那正好是最危险的静默通过。
+    expect(isIncompleteRun(run)).toBe(true);
+    expect(run.findings).toEqual([]);
+  });
+
+  it('保留原始错误信息，便于定位是哪一层炸的', () => {
+    const run = incompleteRunFor(artifact, new Error('verifier exploded'));
+    expect(run.stageFailureReason).toContain('verifier exploded');
+  });
+
+  it('非 Error 抛出物也能转成可读原因', () => {
+    const run = incompleteRunFor(artifact, 'plain string throw');
+    expect(run.stageFailureReason).toContain('plain string throw');
+  });
+
+  it('带出原 artifact 的 coverage_manifest，覆盖清单不丢', () => {
+    const run = incompleteRunFor(artifact, new Error('x'));
+    expect(run.coverageManifest).toBe(artifact.coverage_manifest);
   });
 });
 

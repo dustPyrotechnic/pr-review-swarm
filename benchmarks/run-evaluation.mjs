@@ -2,7 +2,12 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadCase, toPrepareArtifact } from './lib/case-loader.mjs';
-import { evaluateFindings, findingSetInstability } from './lib/metrics.mjs';
+import {
+  evaluateFindings,
+  findingSetInstability,
+  incompleteRunFor,
+  isIncompleteRun,
+} from './lib/metrics.mjs';
 import { loadPipeline } from './lib/pipeline.mjs';
 import { createMeteredFetch, percentile } from './lib/usage-meter.mjs';
 
@@ -65,7 +70,10 @@ async function main() {
   const pricing = loadJson(PRICING_PATH);
 
   const apiKey = process.env.DEEPSEEK_API_KEY;
-  if (!apiKey) {
+  // 空白也算缺失。workflow 里写的是 ${{ secrets.DEEPSEEK_API_KEY }}，仓库没配
+  // 时展开成空串，而配错成一串空格时 `!apiKey` 是 false —— 那会带着一个无效
+  // 凭据一路跑到 API 调用才失败，报出来的是「上游 401」，而不是「你没配 key」。
+  if (!apiKey || apiKey.trim() === '') {
     console.error('✗ 没有 DEEPSEEK_API_KEY：评测要真的调用模型才有意义。');
     console.error('  设置后重跑：DEEPSEEK_API_KEY=sk-xxx node benchmarks/run-evaluation.mjs');
     process.exit(1);
@@ -124,13 +132,20 @@ async function main() {
       // 而不是单次 HTTP 请求——后者永远在秒级，拿它去比 5 分钟的门槛，
       // 等于这条门槛根本没在生效。
       const startedAt = Date.now();
-      const result = await pipeline.runAnalysis({
-        prepareArtifact: artifact,
-        skillIndexMd,
-        model: args.model,
-        client,
-        limits,
-      });
+      let result;
+      try {
+        result = await pipeline.runAnalysis({
+          prepareArtifact: artifact,
+          skillIndexMd,
+          model: args.model,
+          client,
+          limits,
+        });
+      } catch (err) {
+        // 单轮抛异常不该让整轮评测无输出地崩掉。理由与结果形状见 metrics.mjs 的
+        // incompleteRunFor。
+        result = incompleteRunFor(artifact, err);
+      }
       runDurationsMs.push(Date.now() - startedAt);
       runs.push(result);
     }
@@ -178,7 +193,7 @@ function printCase(r) {
       ` · 误报 ${worstFp}（最差一轮）· 陷阱命中 ${worstTrap}/${r.perRun[0].mustNotFindTotal}` +
       ` · 抖动 ${r.instability.toFixed(2)}`,
   );
-  const incomplete = r.runs.filter(isIncomplete).length;
+  const incomplete = r.runs.filter(isIncompleteRun).length;
   if (incomplete > 0) {
     console.log(`  ⚠️  ${incomplete}/${r.runs.length} 轮判定为 incomplete`);
     for (const run of r.runs) {
@@ -213,14 +228,6 @@ function printCase(r) {
   console.log();
 }
 
-/**
- * incomplete 的判据与 analyze → verdict 的实际口径一致：任一必需阶段失败，
- * 或触到任一硬上限，都不允许被当作一次完整审核。
- */
-function isIncomplete(run) {
-  return run.anyRequiredStageFailed || run.coverageManifest.hard_limit_hit;
-}
-
 function summarize(results, stats, runDurationsMs, thresholds) {
   const allRuns = results.flatMap((r) => r.runs);
 
@@ -232,7 +239,7 @@ function summarize(results, stats, runDurationsMs, thresholds) {
     // 用均值会让"每五轮爆一次"被稀释成看着还行的小数。
     falsePositives: Math.max(0, ...results.flatMap((r) => r.perRun.map((p) => p.falsePositives))),
     mustNotFindHit: Math.max(0, ...results.flatMap((r) => r.perRun.map((p) => p.mustNotFindHit))),
-    incompleteRatio: allRuns.length > 0 ? allRuns.filter(isIncomplete).length / allRuns.length : 0,
+    incompleteRatio: allRuns.length > 0 ? allRuns.filter(isIncompleteRun).length / allRuns.length : 0,
     instability: mean(results.map((r) => r.instability)),
     p95LatencyMs: percentile(runDurationsMs, 95),
     // 诊断用：单次 HTTP 请求的 p95。它不参与门槛判定，但在端到端延迟劣化时

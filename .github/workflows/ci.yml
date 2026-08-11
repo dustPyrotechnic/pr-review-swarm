@@ -50,6 +50,29 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  # 评测夹具与指标逻辑的单测。不调用任何模型、不需要 secret，所以留在 PR 阻塞
+  # 通道：用例写错（行号落在 hunk 外、category 拼错、真阴性密度不够）必须在
+  # 合入前就红，而不是等 nightly 用真金白银跑出一个莫名其妙的低召回率。
+  benchmarks-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: benchmarks/package-lock.json
+      # 夹具测试要用生产的 parsePatch / classifyFile / 确定性校验器来验证用例，
+      # 这些经 esbuild 现场打包，因此需要 action 的依赖。
+      - name: Install action deps
+        run: npm ci
+        working-directory: action
+      - name: Install benchmark deps
+        run: npm ci
+        working-directory: benchmarks
+      - run: npm test
+        working-directory: benchmarks
+
   build-dist-no-drift:
     runs-on: ubuntu-latest
     defaults:

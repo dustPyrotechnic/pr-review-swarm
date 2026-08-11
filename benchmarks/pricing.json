@@ -1,0 +1,6 @@
+{
+  "_comment": "DeepSeek 的估算单价，仅用于给 max_cost_usd_per_pr 一个可比的刻度，不是账单。官方价目会变，这里的数值只要求「同一版本内可比」——门槛盯的是趋势劣化（比如某次改动让 prompt 体积翻倍），不是绝对金额。改价目时要同时想清楚 thresholds.json 里的门槛还成不成立。",
+  "model": "deepseek-chat",
+  "input_usd_per_million": 0.27,
+  "output_usd_per_million": 1.1
+}

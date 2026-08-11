@@ -1,9 +1,11 @@
 {
-  "_comment": "回归评测的硬门槛（对抗性测试加固计划 Task 9.2）。误报数是这个产品的头号杀手，max_false_positives 是硬门槛，不是参考值。注意：这些阈值只有在 run-evaluation.mjs 真正接上 analyze 管线之后才有意义——在那之前脚本以 --gate 运行会直接失败，绝不会给出一个空洞的绿灯。",
+  "_comment": "回归评测的硬门槛（对抗性测试加固计划 Task 9.2 / 9.3）。误报数是这个产品的头号杀手，max_false_positives 是硬门槛，不是参考值——而且它取的是「最差一轮」，不是均值。评测由 nightly 触发，需要 DEEPSEEK_API_KEY；没有 key 时脚本直接失败，不会退化成恒绿空跑。",
   "min_recall": 0.8,
   "max_false_positives": 2,
   "max_incomplete_ratio": 0.1,
   "max_p95_latency_ms": 300000,
   "max_cost_usd_per_pr": 0.5,
-  "max_finding_set_instability": 0.2
+  "max_finding_set_instability": 0.2,
+  "_line_tolerance_comment": "finding 与 expected 的行号容差。模型指认同一个缺陷时行号常落在函数签名行与问题行之间；精确到行会把「其实找到了」判成漏报 + 误报，双重惩罚。category 仍要求精确相等。",
+  "line_tolerance": 2
 }

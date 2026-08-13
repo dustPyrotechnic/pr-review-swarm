@@ -37434,7 +37434,7 @@ var init_verifier_client = __esm({
 
 // src/lib/arbiter.ts
 function groupKey(finding) {
-  return `${finding.path}|${finding.line}|${finding.category}`;
+  return `${finding.path}|${finding.line}`;
 }
 function arbitrate(candidates) {
   const internalDiagnostics = [];

@@ -170,5 +170,23 @@ Task 9.x 落地后又走了一轮自审。这一层的缺陷有个共同特征�
 
   修 #9 的过程中还查出**第三个缺陷，在评测层自己身上**：行号修好后召回率仍是 0%，因为评测拿 `category` 做精确匹配——模型返回 `error-handling`，expected 写 `correctness`。但 `candidate-finding.schema.json` 里 category 是 `{type:"string", minLength:1}` 自由文本，设计文档 L139 也写明它「仅用于排序、呈现和统计，不决定是否阻塞」。那条匹配规则是评测自己发明的，不是系统契约。真阴性侧的后果更严重：模型确实踩了陷阱（报出 `helpers.ts:8` 那处历史遗留的 eval），却因 category 措辞不符被记成普通误报——**「命中 must_not_find 即报红」这条门槛因此永远不可能触发**，一条本该最灵敏的护栏被自己关掉了。已改为只按 path + line（带容差）匹配；`findingKey` 同理去掉 category，否则措辞抖动会让指标恒定贴近 1.0，门槛永远红也就永远不再提供信息。
 
-  `thresholds.json` 的六个值仍是先验值，尚未按实测分布复核。已知有三项超标，都是真实的产品质量信号而非管线缺陷：`swift-retain-cycle` 召回仍 0%（6 个候选里 5 个被 verifier 拒、1 个位置不对，看起来是模型能力问题）；抖动 0.5~1.0 对门槛 0.2；误报最差一轮 4 条对上限 2。定门槛前需要先跑一次全量。
+- **门槛已按实测分布定基线（2026-08-13）**：三轮全量评测（各 27 用例 × 3 轮、约 360 次请求、$0.07/轮），推导过程见 [`docs/plans/2026-08-13-threshold-baseline-and-dedup-fix.md`](../../../docs/plans/2026-08-13-threshold-baseline-and-dedup-fix.md)，逐项依据写在 `benchmarks/thresholds.json` 的 `_baseline_*` 注释里。
+
+  | 指标 | 轮 1（无 context） | 轮 2（补 context） | 轮 3（修去重） | 定值 |
+  |---|---|---|---|---|
+  | 召回率 | 80.2% | 91.4% | 88.9% | ≥0.82 |
+  | 误报（最差一轮） | 5 | 5 | 4 | ≤5 |
+  | 陷阱命中 | 1 | 1 | 1 | ≤1（#12 已知） |
+  | incomplete 比例 | 1.2% | 0.0% | 0.0% | ≤0.05 |
+  | 结果抖动 | 0.332 | 0.168 | 0.241 | ≤0.35 |
+  | p95 端到端延迟 | 31.2s | 31.7s | 29.3s | ≤300s（不变） |
+  | 成本/PR | $0.0027 | $0.0029 | $0.0030 | ≤$0.5（不变） |
+
+  轮 1 含已知夹具缺陷（缺 context），不计入基线。**补齐 23 份 `context/` 全文让召回率 +11.2pp、抖动减半**——原先那 0.332 里有一半是 verifier 因「拿不到文件内容」随机拒绝造成的**假**抖动，不是模型真的不稳定。
+
+  **第四个缺陷（arbiter 去重失效，`0a5ae03`）**：`groupKey` 用 `path|line|category` 去重，而 category 是自由文本，于是同一行的同一个问题因措辞不同变成多条 finding——实测 `webhook.go:9` 同时收到 `[hardcoded credential]` 与 `[hardcoded-credential]`（只差一个连字符），`pool.go:15` 收到四条不同措辞。用户侧就是同一行代码收到多条 inline 评论，这本身就是这个产品最招人烦的失败模式。改为 `path|line`；代价是同一行上两个真正不同的问题会被并成一条，这个取舍是有意的（一行同时有两个独立缺陷远比措辞抖动罕见），被合并的条目在 `internalDiagnostics` 里带 `mergedIntoId`，不会静默消失。
+
+  修完后 per-case 误报明显下降（`hardcoded-credential` 5→2、`insecure-random` 3→0、`go-missing-error-check` 3→2），但**总召回率 91.4%→88.9%、抖动 0.168→0.241 反而变差**。这两项与去重无关：合并按 `path|line` 分组，组内成员这两个字段必然相同，所以合并只减少「同一位置的重复条目数」，减不掉位置的种类——而匹配规则与抖动度量都只看 `(path, line)` 集合。反向证据在同一批数据里：`historical-issue-not-introduced` 的误报从 0 涨到 1，而去重只减不增。结论是轮间噪音，已把这条推理写成不变式断言（`a613e15`），免得下一次指标下降再也分不清是回归还是噪音。
+
+  **仍然超标的一项**：陷阱命中（issue #12，模型不区分本次引入与历史遗留）。该门槛从「>0 即红」改为可配置并暂定 1，因为一条永远红的门槛等于没有门槛——红灯疲劳之后没人会再看它。#12 修完必须删掉 `max_must_not_find_hits` 键，`checkThresholds` 缺键时自动回落到 0，这条由单测锁住。另有 issue #11（retain cycle 识别率过低，`swift-retain-cycle` 三轮全 0% 且零候选零误报）。
 - **计划附录 A 的 5 项仍需沙盒人工验证**，本轮未覆盖，理由不变（fork PR 的真实凭据可见性、分支保护真实拒绝 dismiss、`cancel-in-progress` 真实时序、required check 真实门禁、真实模型在注入语料下的行为）。

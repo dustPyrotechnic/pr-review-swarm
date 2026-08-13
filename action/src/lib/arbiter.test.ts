@@ -246,3 +246,68 @@ describe('去重键不含自由文本 category', () => {
     expect(merged?.mergedIntoId).toBe(result.findings[0]!.id);
   });
 });
+
+/**
+ * 不变式：合并不改变 findings 的 (path, line) 集合。
+ *
+ * 这条支撑了一个关键判断。2026-08-13 修去重之后的全量评测里，召回率 91.4% →
+ * 88.9%、抖动 0.168 → 0.241，两项都变差了。但评测的匹配规则（metrics.mjs 的
+ * matches）与抖动度量（findingKey）都只看 path + line —— 而合并是按 path|line
+ * 分组的，组内成员这两个字段必然相同。所以合并只能减少「同一位置的重复条目数」，
+ * 不可能减少位置的种类。
+ *
+ * 换句话说：那两项变差在数学上与去重无关，只能是模型的轮间噪音。把这条推理写成
+ * 断言，是为了让将来任何人改 arbiter 时，都不会悄悄破坏这个前提——否则下一次
+ * 指标下降就再也分不清是回归还是噪音了。
+ */
+describe('不变式：合并不改变 (path, line) 集合', () => {
+  const positionsOf = (xs: Array<{ path: string; line: number }>) =>
+    [...new Set(xs.map((x) => `${x.path}|${x.line}`))].sort();
+
+  it('同一位置的多条措辞合并后，位置集合不变', () => {
+    const candidates = [
+      confirmedCandidate({ id: 'a', path: 'a.go', line: 10, category: 'x' }),
+      confirmedCandidate({ id: 'b', path: 'a.go', line: 10, category: 'y' }),
+      confirmedCandidate({ id: 'c', path: 'a.go', line: 10, category: 'z' }),
+    ];
+
+    const result = arbitrate(candidates);
+
+    expect(result.findings).toHaveLength(1);
+    expect(positionsOf(result.findings)).toEqual(positionsOf(candidates.map((c) => c.finding)));
+  });
+
+  it('多位置混合重复：条目数下降，位置集合仍然一致', () => {
+    const candidates = [
+      confirmedCandidate({ id: 'a1', path: 'a.go', line: 10, category: 'x' }),
+      confirmedCandidate({ id: 'a2', path: 'a.go', line: 10, category: 'y' }),
+      confirmedCandidate({ id: 'b1', path: 'a.go', line: 25, category: 'x' }),
+      confirmedCandidate({ id: 'c1', path: 'b.go', line: 10, category: 'x' }),
+      confirmedCandidate({ id: 'c2', path: 'b.go', line: 10, category: 'q' }),
+      confirmedCandidate({ id: 'c3', path: 'b.go', line: 10, category: 'r' }),
+    ];
+
+    const result = arbitrate(candidates);
+
+    // 6 条候选 → 3 个位置
+    expect(result.findings).toHaveLength(3);
+    expect(positionsOf(result.findings)).toEqual(['a.go|10', 'a.go|25', 'b.go|10']);
+    expect(positionsOf(result.findings)).toEqual(positionsOf(candidates.map((c) => c.finding)));
+  });
+
+  it('每个位置至少保留一条——合并不会让某个位置整体消失', () => {
+    const lines = [3, 3, 7, 11, 11, 11, 20];
+    const candidates = lines.map((line, i) =>
+      confirmedCandidate({ id: `c${i}`, path: 'a.go', line, category: `cat-${i}` }),
+    );
+
+    const result = arbitrate(candidates);
+
+    for (const line of new Set(lines)) {
+      expect(
+        result.findings.some((f) => f.line === line),
+        `位置 a.go:${line} 在合并后消失了`,
+      ).toBe(true);
+    }
+  });
+});

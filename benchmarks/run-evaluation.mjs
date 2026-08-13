@@ -9,6 +9,7 @@ import {
   isIncompleteRun,
 } from './lib/metrics.mjs';
 import { loadPipeline } from './lib/pipeline.mjs';
+import { checkThresholds } from './lib/thresholds.mjs';
 import { createMeteredFetch, percentile } from './lib/usage-meter.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -174,7 +175,7 @@ async function main() {
     return;
   }
 
-  const violations = checkThresholds(summary, thresholds, args);
+  const violations = checkThresholds(summary, thresholds, { repeat: args.repeat });
   if (violations.length > 0) {
     console.log('\n✗ 未达到回归评测门槛：');
     for (const v of violations) console.log(`    - ${v}`);
@@ -278,56 +279,6 @@ function printSummary(s, stats) {
     console.log('\n未对上任何 expected 的 finding（含全部轮次）：');
     for (const line of s.unmatched) console.log(`    ${line}`);
   }
-}
-
-function checkThresholds(s, thresholds, args) {
-  const violations = [];
-
-  if (s.recall < thresholds.min_recall) {
-    violations.push(
-      `召回率 ${(s.recall * 100).toFixed(1)}% 低于门槛 ${(thresholds.min_recall * 100).toFixed(1)}%`,
-    );
-  }
-  if (s.falsePositives > thresholds.max_false_positives) {
-    violations.push(`误报 ${s.falsePositives} 条超过上限 ${thresholds.max_false_positives}`);
-  }
-  if (s.mustNotFindHit > 0) {
-    violations.push(`命中了 ${s.mustNotFindHit} 条 must_not_find（误报陷阱）`);
-  }
-  if (s.incompleteRatio > thresholds.max_incomplete_ratio) {
-    violations.push(
-      `incomplete 比例 ${(s.incompleteRatio * 100).toFixed(1)}% 超过上限 ` +
-        `${(thresholds.max_incomplete_ratio * 100).toFixed(1)}%`,
-    );
-  }
-  if (s.p95LatencyMs > thresholds.max_p95_latency_ms) {
-    violations.push(
-      `p95 端到端延迟 ${s.p95LatencyMs}ms 超过上限 ${thresholds.max_p95_latency_ms}ms`,
-    );
-  }
-  if (s.costUsdPerPr > thresholds.max_cost_usd_per_pr) {
-    violations.push(
-      `单 PR 成本 $${s.costUsdPerPr.toFixed(4)} 超过上限 $${thresholds.max_cost_usd_per_pr}`,
-    );
-  }
-  // 成本/延迟门槛建立在响应里的 usage 字段上。字段拿不到就等于这两个门槛没在
-  // 生效，必须说出来，而不是让它们静默常绿。
-  if (s.missingUsage > 0) {
-    violations.push(
-      `有 ${s.missingUsage} 次响应读不到 usage 字段，成本门槛在这些请求上没有生效`,
-    );
-  }
-
-  if (args.repeat < 2) {
-    // 抖动至少要两轮才有定义。--gate 下只跑一轮，就等于放弃了 Task 9.3 那条门槛。
-    violations.push('--gate 需要 --repeat>=2 才能度量结果抖动（Task 9.3）');
-  } else if (s.instability > thresholds.max_finding_set_instability) {
-    violations.push(
-      `结果抖动 ${s.instability.toFixed(3)} 超过上限 ${thresholds.max_finding_set_instability}`,
-    );
-  }
-
-  return violations;
 }
 
 /**

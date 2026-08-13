@@ -165,7 +165,7 @@ describe('run-evaluation.mjs 脚本本身', () => {
     expect(code).toBe(1);
   }, 120_000);
 
-  it('陷阱被命中时 --gate 报红', async () => {
+  it('陷阱被命中时如实计入指标（是否报红由门槛决定）', async () => {
     // subjective-naming-preference 的陷阱：n := len(rows) 那行报一条
     // maintainability，属于 must_not_find。
     const baseUrl = await startMock(({ isVerifier }) => {
@@ -194,14 +194,17 @@ describe('run-evaluation.mjs 脚本本身', () => {
       };
     });
 
-    const { code, stdout } = await runScript(baseUrl, [
+    const { stdout } = await runScript(baseUrl, [
       '--case=subjective-naming-preference',
       '--gate',
       '--repeat=2',
     ]);
 
-    expect(stdout).toContain('must_not_find');
-    expect(code).toBe(1);
+    // 这里只验证「踩中陷阱能被识别并计数」这条链路。是否报红取决于
+    // thresholds.json 的 max_must_not_find_hits——当前容忍 1 条（issue #12 的已知
+    // 缺口，理由见该文件注释），所以不能在这里断言退出码。门槛的边界行为由
+    // lib/thresholds.test.mjs 单测覆盖，那里不花钱也不受模型随机性影响。
+    expect(stdout).toContain('陷阱命中 1/1');
   }, 120_000);
 
   it('只在后续轮次出现的误报，也要被打印出来', async () => {

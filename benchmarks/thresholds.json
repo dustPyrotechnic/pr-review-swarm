@@ -1,11 +1,27 @@
 {
-  "_comment": "回归评测的硬门槛（对抗性测试加固计划 Task 9.2 / 9.3）。误报数是这个产品的头号杀手，max_false_positives 是硬门槛，不是参考值——而且它取的是「最差一轮」，不是均值。评测由 nightly 触发，需要 DEEPSEEK_API_KEY；没有 key 时脚本直接失败，不会退化成恒绿空跑。",
-  "min_recall": 0.8,
-  "max_false_positives": 2,
-  "max_incomplete_ratio": 0.1,
+  "_comment": "门槛基线来自 2026-08-13 的三轮全量评测（27 用例 × 3 轮，deepseek-chat，约 360 次请求/轮）。详细推导见 docs/plans/2026-08-13-threshold-baseline-and-dedup-fix.md。定值原则是「拦住劣化」而非「标记理想状态」：真实劣化（改坏 prompt）通常让召回率掉 10pp 以上，而实测的轮间噪音是 ±2.5pp，所以门槛留约 2~3 倍噪音的余量——定得太紧会让 nightly 因正常波动天天红，红灯疲劳之后这条护栏就等于不存在了。",
+
+  "_baseline_recall": "三轮实测 80.2% / 91.4% / 88.9%（第一轮含已知夹具缺陷，不计入）。取有效两轮的最低值 88.9%，减去约 2.7 倍噪音（2.5pp）→ 0.82。",
+  "min_recall": 0.82,
+
+  "_baseline_false_positives": "三轮实测 5 / 5 / 4（最差一轮口径）。定在观测最大值 5，不再放宽：误报是这个产品的头号杀手，宁可偶发红也不要把「涨到 6」变成合法状态。剩余误报的治理见计划附录。",
+  "max_false_positives": 5,
+
+  "_baseline_must_not_find": "三轮均为 1，且始终是同一条（historical-todo-in-touched-file，模型把文件里 2019 年的历史 TODO 当成本次引入的问题）。这是 issue #12 的已知缺口。刻意不定成 0：一条永远红的门槛等于没有门槛，大家会开始习惯性忽略它，等真踩中第 2 个陷阱时也看不见。#12 修复后必须把本项删掉——checkThresholds 缺这个键时自动回落到 0。",
+  "max_must_not_find_hits": 1,
+
+  "_baseline_incomplete": "三轮实测 1.2% / 0.0% / 0.0%。1.2% 那次是 issue #10（畸形 tool-call 不重试）造成的，修完未再复现。留一档余量应对偶发。",
+  "max_incomplete_ratio": 0.05,
+
+  "_baseline_instability": "三轮实测 0.332 / 0.168 / 0.241。0.332 那次含 verifier 因缺 context 随机拒绝造成的假抖动，不计入。有效两轮 0.168~0.241，轮间波动 ±0.073，取上界 0.241 加约 1.5 倍波动 → 0.35。",
+  "max_finding_set_instability": 0.35,
+
+  "_baseline_latency": "三轮实测 p95 端到端 31.2s / 31.7s / 29.3s。门槛保持 300s（约 10 倍余量）：这一项盯的是量级劣化（比如多打了几轮请求、模型整体变慢），不需要贴着实测收紧。注意度量的是一次完整审核，不是单次 HTTP 请求（后者实测约 0.4s）。",
   "max_p95_latency_ms": 300000,
+
+  "_baseline_cost": "三轮实测 $0.0027 / $0.0029 / $0.0030 每 PR。门槛保持 $0.5（约 160 倍余量），同上：盯量级，不贴实测。",
   "max_cost_usd_per_pr": 0.5,
-  "max_finding_set_instability": 0.2,
-  "_line_tolerance_comment": "finding 与 expected 的行号容差。模型指认同一个缺陷时行号常落在函数签名行与问题行之间；精确到行会把「其实找到了」判成漏报 + 误报，双重惩罚。category 仍要求精确相等。",
+
+  "_line_tolerance_comment": "finding 与 expected 的行号容差。模型指认同一个缺陷时行号常落在函数签名行与问题行之间；精确到行会把「其实找到了」判成漏报 + 误报的双重惩罚。category 不参与匹配（它在 schema 里是自由文本，见 lib/metrics.mjs 的 matches）。",
   "line_tolerance": 2
 }

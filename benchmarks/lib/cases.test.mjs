@@ -279,3 +279,65 @@ describe('评测输入与生产一致：secret 打码', () => {
     }
   });
 });
+
+/**
+ * verifier 只能看到 `contextContents`。首轮全量评测里它几乎拒绝了一切需要上下文
+ * 才能确认的 finding，理由清一色是「拿不到文件内容」——因为用例当时没有 context，
+ * 而生产的 prepare 会把变更文件的全文填进去。这组断言保证补上的 context 是**可用**
+ * 的，而不只是存在。
+ */
+describe('context 全文与 diff post-image 对齐', () => {
+  /**
+   * 会进 shard（因而会触发 verifier）的用例才需要 context。
+   * 必须在运行时判断——`loaded` 是 beforeAll 填的，collection 阶段还是 undefined。
+   */
+  function needsContext(name) {
+    const artifact = buildArtifact(loaded.get(name));
+    return artifact.shards.some((s) => s.files.length > 0);
+  }
+
+  it('会被审的用例数符合预期（4 个被分类器跳过的不需要 context）', () => {
+    expect(CASE_NAMES.filter(needsContext).length).toBe(CASE_NAMES.length - 4);
+  });
+
+  it.each(CASE_NAMES)('%s: 每个被审文件都有 context 全文', (name) => {
+    if (!needsContext(name)) return;
+    const c = loaded.get(name);
+    const artifact = buildArtifact(c);
+
+    for (const file of artifact.shards.flatMap((s) => s.files)) {
+      expect(
+        Object.keys(file.contextContents),
+        `${name} 的 ${file.path} 缺 context/ 全文——verifier 会因「拿不到文件内容」拒掉一切`,
+      ).toContain(file.path);
+    }
+  });
+
+  it.each(CASE_NAMES)('%s: context 的行号与 diff 的 post-image 严格一致', (name) => {
+    if (!needsContext(name)) return;
+    const c = loaded.get(name);
+
+    for (const file of c.files) {
+      const full = c.contextContents[file.path];
+      if (full === undefined) continue;
+
+      const contextLines = full.split('\n');
+      const hunks = pipeline.parsePatch(file.path, file.patch).hunks;
+
+      for (const hunk of hunks) {
+        for (const line of hunk.lines) {
+          if (line.type === 'del') continue;
+          const actual = contextLines[line.newLine - 1];
+          // 对不齐比没有 context 更糟：verifier 会照着一份和 finding 行号错开的
+          // 代码去核对，得出的结论毫无意义却看着很像回事。
+          expect(
+            actual,
+            `${name} 的 ${file.path}:${line.newLine} —— diff 说是 ${JSON.stringify(
+              line.content,
+            )}，context 里是 ${JSON.stringify(actual)}`,
+          ).toBe(line.content);
+        }
+      }
+    }
+  });
+});

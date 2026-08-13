@@ -24,6 +24,7 @@ async function buildArtifactFor(caseName) {
     parsePatch: pipeline.parsePatch,
     shardFiles: pipeline.shardFiles,
     classifyFile: pipeline.classifyFile,
+    scanAndRedactSecrets: pipeline.scanAndRedactSecrets,
     limits: {
       maxFilesPerShard: pipeline.centralLimits.maxFilesPerShard,
       maxBytesPerShard: pipeline.centralLimits.maxBytesPerShard,

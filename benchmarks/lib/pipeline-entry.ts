@@ -12,6 +12,7 @@ export { runAnalysis } from '../../action/src/entrypoints/analyze.js';
 export { parsePatch } from '../../action/src/lib/diff-parser.js';
 export { shardFiles } from '../../action/src/lib/sharding.js';
 export { classifyFile } from '../../action/src/lib/file-classifier.js';
+export { scanAndRedactSecrets } from '../../action/src/lib/secret-scanner.js';
 export { validateDeterministicEvidence } from '../../action/src/lib/deterministic-evidence-validator.js';
 export { createDeepSeekClient } from '../../action/src/lib/deepseek-client.js';
 export { readIndexMd, loadSkill } from '../../action/src/lib/skill-loader.js';

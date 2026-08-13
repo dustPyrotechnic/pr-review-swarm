@@ -119,10 +119,11 @@ describe('toPrepareArtifact', () => {
       filename.endsWith('.png')
         ? { treatment: 'skipped_binary', skipReason: 'binary' }
         : { treatment: 'reviewed' },
+    scanAndRedactSecrets: (content) => ({ redactedContent: content, redactionsCount: 0 }),
     limits: { maxFilesPerShard: 20, maxBytesPerShard: 100000, maxShards: 5 },
   };
 
-  it.each(['parsePatch', 'shardFiles', 'classifyFile'])(
+  it.each(['parsePatch', 'shardFiles', 'classifyFile', 'scanAndRedactSecrets'])(
     '缺少依赖 %s 时直接报错，而不是静默降级',
     (missing) => {
       const dir = makeCase({ 'diff.patch': SIMPLE_DIFF, 'expected-findings.json': SIMPLE_EXPECTED });

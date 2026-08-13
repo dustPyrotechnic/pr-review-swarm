@@ -119,12 +119,12 @@ function readContextDir(contextRoot) {
  * 分片，否则度量的是"benchmark 自己那套解析"的召回率，没有意义。
  */
 export function toPrepareArtifact(loadedCase, deps) {
-  const { parsePatch, shardFiles, classifyFile, limits } = deps;
+  const { parsePatch, shardFiles, classifyFile, scanAndRedactSecrets, limits } = deps;
 
   // 三个依赖都必传，不给默认值。尤其是 classifyFile：给它一个「全部按 reviewed
   // 处理」的兜底，忘传时不会报错，只会把 lockfile / vendor / 生成文件统统送进
   // 模型——于是那几条误报陷阱用例悄悄失效，而指标看起来一切正常。
-  for (const name of ['parsePatch', 'shardFiles', 'classifyFile']) {
+  for (const name of ['parsePatch', 'shardFiles', 'classifyFile', 'scanAndRedactSecrets']) {
     if (typeof deps[name] !== 'function') {
       throw new Error(`toPrepareArtifact: 缺少依赖 ${name}（应传入 action 的生产实现）`);
     }
@@ -138,7 +138,11 @@ export function toPrepareArtifact(loadedCase, deps) {
       { filename: f.path },
       loadedCase.repoConfig ?? { ignore_globs: [], generated_globs: [] },
     );
-    return { ...f, parsed: parsePatch(f.path, f.patch), classification };
+    // 打码必须在 parsePatch **之前**，和 prepare.ts:127 一致。生产送进模型的
+    // 内容永远是打码后的，评测若跳过这一步，`hardcoded-credential` 这类用例
+    // 度量的就是一个生产里不存在的输入。
+    const { redactedContent } = scanAndRedactSecrets(f.patch);
+    return { ...f, parsed: parsePatch(f.path, redactedContent), classification };
   });
 
   // 除了被分类器跳过的，无 hunk 的文件（二进制、纯模式变更）同样不进 shard。
@@ -161,7 +165,9 @@ export function toPrepareArtifact(loadedCase, deps) {
       const contextContents = {};
       const contextRefs = [];
       if (loadedCase.contextContents[path] !== undefined) {
-        contextContents[path] = loadedCase.contextContents[path];
+        // prepare.ts:136 对 contextContents 同样打码——verifier 也不该看到明文凭据。
+        contextContents[path] = scanAndRedactSecrets(loadedCase.contextContents[path])
+          .redactedContent;
         contextRefs.push({
           path,
           reason: 'same_file_full_content',

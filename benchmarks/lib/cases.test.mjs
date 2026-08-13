@@ -216,6 +216,7 @@ function buildArtifact(c) {
     parsePatch: pipeline.parsePatch,
     shardFiles: pipeline.shardFiles,
     classifyFile: pipeline.classifyFile,
+    scanAndRedactSecrets: pipeline.scanAndRedactSecrets,
     limits: {
       maxFilesPerShard: pipeline.centralLimits.maxFilesPerShard,
       maxBytesPerShard: pipeline.centralLimits.maxBytesPerShard,
@@ -223,3 +224,58 @@ function buildArtifact(c) {
     },
   });
 }
+
+/**
+ * 生产的 prepare 在 parsePatch **之前**对 patch 做 scanAndRedactSecrets
+ * （prepare.ts:127），contextContents 同样打码（prepare.ts:136）。评测必须走同一
+ * 条路，否则 hardcoded-credential 这类用例度量的是一个生产里不存在的输入——模型
+ * 在生产里看到的是 `[REDACTED:...]`，在评测里却看到明文。
+ */
+describe('评测输入与生产一致：secret 打码', () => {
+  it('用例里的凭据在进 shard 前已被打码', () => {
+    const artifact = buildArtifact(loaded.get('hardcoded-credential'));
+    const content = artifact.shards
+      .flatMap((s) => s.files)
+      .flatMap((f) => f.hunks)
+      .flatMap((h) => h.lines)
+      .map((l) => l.content)
+      .join('\n');
+
+    expect(content).toContain('REDACTED');
+    expect(content).not.toContain('3f7a91c04e8b46d2ab5c1e09f2d84b7615ca390e');
+  });
+
+  it('打码不改变行数——否则 #9 的行号锚点会整体漂掉', () => {
+    // scanAndRedactSecrets 做的是行内替换，但这一点必须被锁住：一旦某条 pattern
+    // 跨行匹配，post-image 行号就会和 @@ 头声明的范围错开，所有 finding 又会被
+    // 确定性校验成批拒掉——正是 #9 的故障模式，只是换了个起因。
+    for (const name of CASE_NAMES) {
+      const c = loaded.get(name);
+      for (const f of c.files) {
+        if (f.patch === '') continue;
+        const { redactedContent } = pipeline.scanAndRedactSecrets(f.patch);
+        expect(
+          redactedContent.split('\n').length,
+          `${name} 的 ${f.path}：打码改变了行数`,
+        ).toBe(f.patch.split('\n').length);
+      }
+    }
+  });
+
+  it('打码后 must_find 的行号仍然能通过确定性证据校验', () => {
+    for (const name of CASE_NAMES) {
+      const c = loaded.get(name);
+      for (const e of c.expected.filter((x) => x.must_find)) {
+        const file = c.files.find((f) => f.path === e.path);
+        const { redactedContent } = pipeline.scanAndRedactSecrets(file.patch);
+        const hunks = pipeline.parsePatch(file.path, redactedContent).hunks;
+        const result = pipeline.validateDeterministicEvidence(
+          { path: e.path, line: e.line, side: 'RIGHT' },
+          e.path,
+          hunks,
+        );
+        expect(result.status, `${name} expected ${e.path}:${e.line}（打码后）`).toBe('passed');
+      }
+    }
+  });
+});

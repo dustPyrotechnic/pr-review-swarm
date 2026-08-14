@@ -185,3 +185,53 @@ describe('runExpert', () => {
     expect(client.sendStructuredRequest).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * issue #12：模型把「碰到的文件里的历史遗留问题」当成本次引入的缺陷报出来。
+ *
+ * 实测：historical-todo-in-touched-file 用例的陷阱被稳定命中（3 轮 3 中）——
+ * 模型报出了文件里那条 2019 年的 TODO，而它出现在 hunk 的**上下文行**里，只是
+ * 因为紧邻新增代码才被一起送进来。
+ *
+ * #9 修完后 shard 内容已经用 "+" 明确区分了新增行与上下文行，约束所需的信息就在
+ * prompt 里，缺的是把它讲成一条硬规则。
+ */
+describe('本次引入 vs 历史遗留的边界（#12）', () => {
+  async function systemPromptOf() {
+    const client = {
+      sendStructuredRequest: vi.fn().mockResolvedValue(makeValidExpertOutput(0, true)),
+    };
+    await runExpert({ ...baseInput, client });
+    return (client.sendStructuredRequest.mock.calls[0]![0] as { systemPrompt: string })
+      .systemPrompt;
+  }
+
+  it('讲明「+」标记的行才是本次新增', async () => {
+    const prompt = await systemPromptOf();
+    expect(prompt).toMatch(/"\+"/);
+  });
+
+  it('讲明没有标记的行属于既有代码', async () => {
+    const prompt = await systemPromptOf();
+    expect(prompt.toLowerCase()).toMatch(/pre-?exist|already|unchanged|context line/);
+  });
+
+  it('保留「被本次改动 exposed / made reachable」这个例外', async () => {
+    // 不能矫枉过正：设计文档明确允许报「本次改动使其出错或首次可达」的既有问题。
+    // 一刀切禁止上下文行会把这类真实缺陷一起禁掉——那是用另一个漏报换掉一个误报。
+    const prompt = await systemPromptOf();
+    expect(prompt.toLowerCase()).toMatch(/exposed|reachable/);
+  });
+
+  it('明确点出「文件里碰巧存在的旧问题」不该报', async () => {
+    // 这正是 historical-todo 用例的形态：一条 2019 年的 TODO 出现在上下文行里。
+    const prompt = await systemPromptOf();
+    expect(prompt.toLowerCase()).toMatch(/pre-dates|predates|already there|long-standing|historical/);
+  });
+
+  it('行号契约仍然在（#9 的修复不能被这次改动挤掉）', async () => {
+    const prompt = await systemPromptOf();
+    expect(prompt).toContain('post-image');
+    expect(prompt).toContain('RIGHT');
+  });
+});

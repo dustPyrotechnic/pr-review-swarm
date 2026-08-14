@@ -83,12 +83,37 @@ const LINE_NUMBER_CONTRACT =
   'and no number because they do not exist in the post-image — you cannot anchor a ' +
   'finding to them; anchor it to the surviving line that carries the problem instead.';
 
+// The "only report what this PR introduced" instruction alone was not enough:
+// the model reported a 2019 TODO that merely happened to sit on a *context* line
+// next to the new code (issue #12, hit 3/3 rounds on the
+// historical-todo-in-touched-file case). The gutter added for #9 already makes
+// the distinction visible — a line either carries "+" or it doesn't — so this
+// spells out the rule the gutter implies.
+//
+// Deliberately keeps the exposed/reachable exception intact. Banning context
+// lines outright would trade one false positive for a whole class of real
+// misses: a PR that makes existing code reachable, or feeds it a value it never
+// had to handle, genuinely introduces that bug even though the buggy line is
+// unchanged. The distinction is causal, not positional.
+const SCOPE_CONTRACT =
+  'Lines marked "+" are the ones this PR adds or rewrites. Lines with no marker are ' +
+  'context: they already exist in the codebase and are shown only so you can understand ' +
+  'the change. A defect that lives entirely on a context line, pre-dates this PR, and is ' +
+  'untouched by it is OUT OF SCOPE — do not report it, no matter how real it is. Someone ' +
+  'reading this review needs to know what *this change* broke; a historical TODO or an ' +
+  'old questionable pattern that happens to sit near the diff is noise that buries the ' +
+  'findings that matter. The exception is causal, not positional: if this PR makes ' +
+  'existing code reachable for the first time, feeds it input it never had to handle, or ' +
+  'otherwise turns a latent problem into a live one, that IS in scope — report it and say ' +
+  'in `evidence` which added line causes it.';
+
 function buildExpertSystemPrompt(agentName: string, skillBodies: string[]): string {
   return [
     `You are the "${agentName}" reviewer in a multi-expert pull request review swarm.`,
     'Only report issues introduced, exposed, expanded, or made reachable by this PR. ' +
       'Follow every checklist below.',
     LINE_NUMBER_CONTRACT,
+    SCOPE_CONTRACT,
     ...skillBodies,
   ].join('\n\n');
 }

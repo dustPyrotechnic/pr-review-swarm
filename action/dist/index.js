@@ -37260,6 +37260,7 @@ function buildExpertSystemPrompt(agentName, skillBodies) {
     `You are the "${agentName}" reviewer in a multi-expert pull request review swarm.`,
     "Only report issues introduced, exposed, expanded, or made reachable by this PR. Follow every checklist below.",
     LINE_NUMBER_CONTRACT,
+    SCOPE_CONTRACT,
     ...skillBodies
   ].join("\n\n");
 }
@@ -37312,7 +37313,7 @@ async function runExpert(input) {
   const hardLimitHit = data.coverage_complete !== true || data.candidate_findings.length >= input.maxCandidateFindingsPerAgentPerShard;
   return { output: data, hardLimitHit };
 }
-var ExpertOutputSchemaError, expertOutputSchemaForModel, LINE_NUMBER_CONTRACT;
+var ExpertOutputSchemaError, expertOutputSchemaForModel, LINE_NUMBER_CONTRACT, SCOPE_CONTRACT;
 var init_expert_runner = __esm({
   "src/lib/expert-runner.ts"() {
     "use strict";
@@ -37329,6 +37330,7 @@ var init_expert_runner = __esm({
       [candidate_finding_schema_default.$id]: candidate_finding_schema_default
     });
     LINE_NUMBER_CONTRACT = 'Each diff line is prefixed with its line number in the post-image \u2014 the file as it will be *after* this PR. When you report a finding, `line` MUST be one of those printed numbers and `side` MUST be "RIGHT". Do not count lines yourself and do not guess: a finding whose line is not one of the printed numbers is discarded, however correct the underlying observation may be. Removed lines are shown with a "-" marker and no number because they do not exist in the post-image \u2014 you cannot anchor a finding to them; anchor it to the surviving line that carries the problem instead.';
+    SCOPE_CONTRACT = 'Lines marked "+" are the ones this PR adds or rewrites. Lines with no marker are context: they already exist in the codebase and are shown only so you can understand the change. A defect that lives entirely on a context line, pre-dates this PR, and is untouched by it is OUT OF SCOPE \u2014 do not report it, no matter how real it is. Someone reading this review needs to know what *this change* broke; a historical TODO or an old questionable pattern that happens to sit near the diff is noise that buries the findings that matter. The exception is causal, not positional: if this PR makes existing code reachable for the first time, feeds it input it never had to handle, or otherwise turns a latent problem into a live one, that IS in scope \u2014 report it and say in `evidence` which added line causes it.';
   }
 });
 

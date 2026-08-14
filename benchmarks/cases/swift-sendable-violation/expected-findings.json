@@ -1,0 +1,8 @@
+[
+  {
+    "path": "Sources/Networking/ImageCache.swift",
+    "line": 12,
+    "category": "correctness",
+    "must_find": true
+  }
+]

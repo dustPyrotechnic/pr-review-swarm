@@ -1,0 +1,17 @@
+diff --git a/internal/worker/pool.go b/internal/worker/pool.go
+index 1a2b3c4..5d6e7f8 100644
+--- a/internal/worker/pool.go
++++ b/internal/worker/pool.go
+@@ -12,5 +12,12 @@ func (p *Pool) Start() {
+ 	p.mu.Lock()
+ 	defer p.mu.Unlock()
+ 
++	for _, job := range p.jobs {
++		go func(j Job) {
++			result := j.Run()
++			p.results <- result
++		}(job)
++	}
++
+ 	p.started = true
+ }

@@ -1,0 +1,15 @@
+diff --git a/internal/auth/token_test.go b/internal/auth/token_test.go
+index 1a2b3c4..5d6e7f8 100644
+--- a/internal/auth/token_test.go
++++ b/internal/auth/token_test.go
+@@ -15,3 +15,10 @@ func TestVerifyToken(t *testing.T) {
+ 	t.Parallel()
+ 
++	// 这是测试专用的假密钥，不对应任何真实环境
++	const testSigningKey = "test-only-signing-key-do-not-use-in-prod"
++	tok := signForTest(t, testSigningKey, "user-1")
++
++	if _, err := Verify(tok, testSigningKey); err != nil {
++		t.Fatalf("verify failed: %v", err)
++	}
+ }

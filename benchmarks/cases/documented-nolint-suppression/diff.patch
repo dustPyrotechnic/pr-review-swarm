@@ -1,0 +1,17 @@
+diff --git a/internal/crypto/legacy.go b/internal/crypto/legacy.go
+index 1a2b3c4..5d6e7f8 100644
+--- a/internal/crypto/legacy.go
++++ b/internal/crypto/legacy.go
+@@ -16,5 +16,12 @@ package crypto
+ import "crypto/md5"
+ 
++// LegacyChecksum 只用于校验 2018 年前归档文件的完整性，不用于任何安全用途。
++// 归档格式已冻结，无法换算法。
++//nolint:gosec // 非安全用途的历史归档校验，见 ADR-014
++func LegacyChecksum(b []byte) string {
++	return fmt.Sprintf("%x", md5.Sum(b))
++}
++
+ func Checksum(b []byte) string {
+ 	return fmt.Sprintf("%x", sha256.Sum256(b))
+ }

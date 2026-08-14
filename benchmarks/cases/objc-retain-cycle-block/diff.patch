@@ -1,0 +1,18 @@
+diff --git a/Classes/FeedViewController.m b/Classes/FeedViewController.m
+index 1a2b3c4..5d6e7f8 100644
+--- a/Classes/FeedViewController.m
++++ b/Classes/FeedViewController.m
+@@ -30,6 +30,13 @@ @implementation FeedViewController
+   [super viewDidLoad];
+ }
+ 
++- (void)startRefreshing {
++  [self.service fetchFeedWithCompletion:^(NSArray *items) {
++    self.items = items;
++    [self.tableView reloadData];
++  }];
++}
++
+ - (void)dealloc {
+   [[NSNotificationCenter defaultCenter] removeObserver:self];
+ }

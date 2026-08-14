@@ -1,0 +1,8 @@
+[
+  {
+    "path": "internal/handler/users.go",
+    "line": 1,
+    "category": "maintainability",
+    "must_find": false
+  }
+]

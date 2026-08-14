@@ -35,3 +35,38 @@ jobs:
       - run: npm ci
       - name: Stress and resource-pressure suite
         run: npm run test:stress
+
+  # 回归评测（Task 9.1-9.3）。这个 job 会真的调用 DeepSeek，会花钱，所以只走
+  # nightly，且刻意**不**加 continue-on-error —— 召回率掉下去、误报涨上来、结果
+  # 开始抖，都必须是红的。
+  #
+  # 没有配置 DEEPSEEK_API_KEY 时它会失败而不是跳过：一个悄悄跳过的评测 job 和
+  # 没有评测是一回事，但前者会在 Actions 列表里显示成绿的。
+  evaluation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: action/package-lock.json
+      # 评测把 action 的 TypeScript 源码现场打成 bundle 来跑（见
+      # benchmarks/lib/pipeline.mjs），所以需要 action 的依赖，尤其是 esbuild。
+      - name: Install action deps
+        run: npm ci
+        working-directory: action
+      - name: Install benchmark deps
+        run: npm ci
+        working-directory: benchmarks
+      - name: Benchmark harness unit tests
+        run: npm test
+        working-directory: benchmarks
+      - name: Regression evaluation (gated)
+        working-directory: benchmarks
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        # --repeat=3：Task 9.3 的抖动度量至少要两轮才有定义，三轮才能让
+        # 「三次里坏一次」这种情况在配对均值里显出来。再往上加就是线性烧钱。
+        run: node run-evaluation.mjs --gate --repeat=3

@@ -1,0 +1,8 @@
+[
+  {
+    "path": "Sources/App/AppDelegate.swift",
+    "line": 17,
+    "category": "correctness",
+    "must_find": false
+  }
+]

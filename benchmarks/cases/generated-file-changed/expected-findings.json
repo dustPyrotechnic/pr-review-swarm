@@ -1,0 +1,8 @@
+[
+  {
+    "path": "api/gen/service.pb.go",
+    "line": 124,
+    "category": "maintainability",
+    "must_find": false
+  }
+]

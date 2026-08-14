@@ -37080,7 +37080,7 @@ function createDeepSeekClient(options) {
             `deepseek-client: tool call arguments contain a non-finite number (${err.literal})`
           );
         }
-        throw new DeepSeekResponseError(
+        throw new DeepSeekMalformedResultError(
           "deepseek-client: tool call arguments are not valid JSON"
         );
       }
@@ -37104,7 +37104,7 @@ function createDeepSeekClient(options) {
   }
   return { sendStructuredRequest: sendStructuredRequestSafely };
 }
-var SUBMIT_RESULT_FUNCTION_NAME, DeepSeekTransientError, DeepSeekResponseError, NonFiniteNumberError, MAX_RETRY_AFTER_MS;
+var SUBMIT_RESULT_FUNCTION_NAME, DeepSeekTransientError, DeepSeekResponseError, DeepSeekMalformedResultError, NonFiniteNumberError, MAX_RETRY_AFTER_MS;
 var init_deepseek_client = __esm({
   "src/lib/deepseek-client.ts"() {
     "use strict";
@@ -37112,6 +37112,8 @@ var init_deepseek_client = __esm({
     DeepSeekTransientError = class extends Error {
     };
     DeepSeekResponseError = class extends Error {
+    };
+    DeepSeekMalformedResultError = class extends Error {
     };
     NonFiniteNumberError = class extends Error {
       constructor(literal) {
@@ -37257,6 +37259,7 @@ function buildExpertSystemPrompt(agentName, skillBodies) {
   return [
     `You are the "${agentName}" reviewer in a multi-expert pull request review swarm.`,
     "Only report issues introduced, exposed, expanded, or made reachable by this PR. Follow every checklist below.",
+    LINE_NUMBER_CONTRACT,
     ...skillBodies
   ].join("\n\n");
 }
@@ -37299,12 +37302,17 @@ async function runExpert(input) {
   const data = await withRetry(() => requestAndValidate(input, systemPrompt, userPrompt), {
     maxRetries: input.maxSchemaRetries ?? 0,
     sleep: input.retrySleep,
-    isRetryable: (err) => err instanceof ExpertOutputSchemaError
+    // Both of these are the same failure mode wearing different hats: the model
+    // produced a response that is structurally unusable *this time*, and the
+    // identical request usually succeeds on the next attempt. Retrying one but
+    // not the other was an inconsistency, not a policy — see
+    // DeepSeekMalformedResultError.
+    isRetryable: (err) => err instanceof ExpertOutputSchemaError || err instanceof DeepSeekMalformedResultError
   });
   const hardLimitHit = data.coverage_complete !== true || data.candidate_findings.length >= input.maxCandidateFindingsPerAgentPerShard;
   return { output: data, hardLimitHit };
 }
-var ExpertOutputSchemaError, expertOutputSchemaForModel;
+var ExpertOutputSchemaError, expertOutputSchemaForModel, LINE_NUMBER_CONTRACT;
 var init_expert_runner = __esm({
   "src/lib/expert-runner.ts"() {
     "use strict";
@@ -37314,11 +37322,13 @@ var init_expert_runner = __esm({
     init_schema_dereferencer();
     init_data_boundary();
     init_retry();
+    init_deepseek_client();
     ExpertOutputSchemaError = class extends Error {
     };
     expertOutputSchemaForModel = dereferenceSchema(expert_output_schema_default, {
       [candidate_finding_schema_default.$id]: candidate_finding_schema_default
     });
+    LINE_NUMBER_CONTRACT = 'Each diff line is prefixed with its line number in the post-image \u2014 the file as it will be *after* this PR. When you report a finding, `line` MUST be one of those printed numbers and `side` MUST be "RIGHT". Do not count lines yourself and do not guess: a finding whose line is not one of the printed numbers is discarded, however correct the underlying observation may be. Removed lines are shown with a "-" marker and no number because they do not exist in the post-image \u2014 you cannot anchor a finding to them; anchor it to the surviving line that carries the problem instead.';
   }
 });
 
@@ -37424,7 +37434,7 @@ var init_verifier_client = __esm({
 
 // src/lib/arbiter.ts
 function groupKey(finding) {
-  return `${finding.path}|${finding.line}|${finding.category}`;
+  return `${finding.path}|${finding.line}`;
 }
 function arbitrate(candidates) {
   const internalDiagnostics = [];
@@ -37557,6 +37567,7 @@ var init_artifact_reader = __esm({
 // src/entrypoints/analyze.ts
 var analyze_exports = {};
 __export(analyze_exports, {
+  buildShardContent: () => buildShardContent,
   readPrepareArtifactFromFile: () => readPrepareArtifactFromFile,
   run: () => run4,
   runAnalysis: () => runAnalysis,
@@ -37585,8 +37596,12 @@ function buildShardContent(shard) {
   return shard.files.map((file) => {
     const hunkText = file.hunks.map(
       (hunk) => hunk.lines.map((line) => {
-        const marker = line.type === "add" ? "+" : line.type === "del" ? "-" : " ";
-        return `${marker}${line.content}`;
+        if (line.type === "del") {
+          return `${" ".repeat(LINE_NO_WIDTH)} -${line.content}`;
+        }
+        const marker = line.type === "add" ? "+" : " ";
+        const lineNo = String(line.newLine ?? "").padStart(LINE_NO_WIDTH);
+        return `${lineNo} ${marker}${line.content}`;
       }).join("\n")
     ).join("\n");
     return `File: ${file.path}
@@ -37805,7 +37820,7 @@ async function run4() {
   core5.setOutput("any_required_stage_failed", String(result.anyRequiredStageFailed));
   core5.setOutput("internal_diagnostics", JSON.stringify(result.internalDiagnostics));
 }
-var import_node_fs4, core5, AGENT_NAMES;
+var import_node_fs4, core5, AGENT_NAMES, LINE_NO_WIDTH;
 var init_analyze = __esm({
   "src/entrypoints/analyze.ts"() {
     "use strict";
@@ -37821,6 +37836,7 @@ var init_analyze = __esm({
     init_arbiter();
     init_artifact_reader();
     AGENT_NAMES = ["generic-correctness", "generic-security", "generic-maintainability"];
+    LINE_NO_WIDTH = 6;
   }
 });
 

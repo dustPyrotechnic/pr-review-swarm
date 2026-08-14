@@ -1,0 +1,5 @@
+{
+  "_comment": "目标仓库把 protoc 产物纳入 generated_globs；这条用例验证生成文件不会被审。",
+  "ignore_globs": [],
+  "generated_globs": ["api/gen/**"]
+}

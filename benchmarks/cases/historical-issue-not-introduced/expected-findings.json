@@ -1,7 +1,7 @@
 [
   {
     "path": "src/utils/helpers.ts",
-    "line": 10,
+    "line": 8,
     "category": "security",
     "must_find": false
   }

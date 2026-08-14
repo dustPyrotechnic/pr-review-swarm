@@ -1,0 +1,8 @@
+[
+  {
+    "path": "internal/store/write.go",
+    "line": 26,
+    "category": "correctness",
+    "must_find": false
+  }
+]

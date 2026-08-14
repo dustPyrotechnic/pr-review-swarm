@@ -1,0 +1,4 @@
+diff --git a/internal/handler/user.go b/internal/handler/users.go
+similarity index 100%
+rename from internal/handler/user.go
+rename to internal/handler/users.go

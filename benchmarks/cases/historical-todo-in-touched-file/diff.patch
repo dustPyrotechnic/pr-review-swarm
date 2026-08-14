@@ -1,0 +1,15 @@
+diff --git a/internal/billing/invoice.go b/internal/billing/invoice.go
+index 1a2b3c4..5d6e7f8 100644
+--- a/internal/billing/invoice.go
++++ b/internal/billing/invoice.go
+@@ -25,6 +25,10 @@ func (s *Service) Render(inv Invoice) string {
+ // TODO(2019): 这里的汇率换算还没接实时汇率，先用固定值
+ const fixedRate = 6.5
+ 
++func (s *Service) FormatAmount(cents int64) string {
++	return fmt.Sprintf("%.2f", float64(cents)/100)
++}
++
+ func (s *Service) Render(inv Invoice) string {
+ 	return s.tpl.Render(inv)
+ }

@@ -63,7 +63,7 @@
 
 按 `docs/plans/2026-07-27-adversarial-test-hardening-plan.md` 附录 B 的要求登记。该计划**不重复**上表 26 条，而是补齐三类空白：把"CI 配置锁定 / 人工阅读"升级为自动化断言、补上对抗性输入的零覆盖、补上不变式与资源压力。
 
-落地后规模：`action` 745 tests / 54 files（起点 305 / 38）+ 7 条 nightly 压力用例；`cli` 69 tests / 12 files（起点 35 / 9）。
+落地后规模：`action` 745 tests / 54 files（起点 305 / 38）+ 7 条 nightly 压力用例；`cli` 69 tests / 12 files（起点 35 / 9）；`benchmarks` 239 tests / 9 files（起点 0）+ 27 个评测用例。
 
 ## 逐 Task 产出
 
@@ -91,9 +91,10 @@
 | 7.4 网络故障与退避 | `src/lib/deepseek-client.network.test.ts`（23） | 完成 |
 | 8.1 CLI key 泄漏 | `cli/src/lib/key-leak.test.mjs`（8） | 完成 |
 | 8.2 CLI 部署幂等 | `cli/src/lib/deploy-safety.test.mjs`（16） | 完成 |
-| 9.1 扩充 benchmark 用例 | — | **未做**（见"阻塞项"） |
-| 9.2 评测 CI 门槛 | `benchmarks/thresholds.json` + `run-evaluation.mjs` 门槛逻辑 | 部分完成（见"阻塞项"） |
-| 9.3 稳定性度量 | — | **未做**（见"阻塞项"） |
+| 9.0 评测接上真实 analyze 管线 | `benchmarks/lib/{pipeline-entry.ts,pipeline.mjs,case-loader.mjs,split-patch.mjs}` + `{pipeline,case-loader,split-patch,end-to-end}.test.mjs`（32） | 完成（9.1/9.3 的前置阻塞项） |
+| 9.1 扩充 benchmark 用例 | `benchmarks/cases/` 27 个用例（13 真阳 / 14 真阴）+ `lib/cases.test.mjs`（139） | 完成 |
+| 9.2 评测 CI 门槛 | `benchmarks/thresholds.json` + `pricing.json` + `lib/{metrics,usage-meter}.mjs`（29）+ `nightly.yml` 的 `evaluation` job | 完成 |
+| 9.3 稳定性度量 | `findingSetInstability`（Jaccard 配对均值）+ `--repeat=N`，nightly 跑 `--repeat=3` | 完成 |
 
 ## 测出并修复的真实缺陷（13 个）
 
@@ -114,6 +115,32 @@
 
 另有两个"读取层零校验"缺陷（`artifact-reader` 落地前的 18 条红）与两个网络层缺陷（忽略 `Retry-After`、空响应体抛裸 `SyntaxError`），见 `fbabc48` / `a1cbd7a`；以及 CLI 部署不幂等（`git checkout -b` 在重跑时直接抛裸 git 错误），见 `869f554`。
 
+## 评测层自审发现并修复的缺陷（2026-08-05，6 个 + 机器人补 2 个）
+
+Task 9.x 落地后又走了一轮自审。这一层的缺陷有个共同特征：**不报错、不影响解析，只让指标悄悄失真**——正是回归评测最容易变成摆设的方式。
+
+| # | 缺陷 | 位置 | 影响 |
+|---|---|---|---|
+| 1 | `trim()` 把 hunk 末尾的空 context 行当尾部空白删掉 | `benchmarks/lib/split-patch.mjs` | unified diff 里空上下文行写作「单个空格」。删掉它，hunk 就比声明的 `newLines` 少一行；而确定性校验器按 `newStart + newLines - 1` 卡上界，最后一行会被判成「不属于本次 diff 修改的范围」，模型报对了也进不了 findings。表现为召回率莫名偏低 |
+| 2 | 4 个用例的 `@@` 头行数与实际不符 | `historical-issue-not-introduced`、`swift-retain-cycle`（**原有用例**）、`lockfile-only-change`、`vendor-dependency-update`（本轮新增） | 同上：声明的 `newLines` 少写一行就会让边界上的 expected 永远无法命中 |
+| 3 | `historical-issue-not-introduced` 的 expected 行号指向新文件里不存在的行 | 该用例的 `expected-findings.json`（**原有用例**） | `eval(input)` 实际在新文件第 8 行，expected 写的是 10。它此前能"通过"，只是因为错误的 `@@ +1,10` 恰好把上界撑到了 10。两个错误互相掩盖 |
+| 4 | 夹具检查漏掉被分类器跳过的文件 | `benchmarks/lib/cases.test.mjs` | 缺陷 2 里有两个正是 lockfile / vendor 用例：它们不走行号校验，所以计数错误藏在了没人看的地方。新增的「`@@` 声明行数必须等于实际行数」断言覆盖全部用例，刻意不复用 `parsePatch`（它根本不读声明的行数，用它验证等于让被测对象给自己打分） |
+| 5 | p95 延迟度量的是单次 HTTP 请求，不是一次审核 | `benchmarks/run-evaluation.mjs` | `max_p95_latency_ms` 是 300000ms（5 分钟），显然针对一次完整 PR 审核。拿单请求延迟（秒级）去比，这条门槛等于从未生效。改为在 `runAnalysis` 外层端到端计时，单请求 p95 降级为诊断输出 |
+| 6 | 多个 vitest worker 并发写同一个 esbuild bundle | `benchmarks/lib/pipeline.mjs` | 一个 worker 会 require 到另一个正写到一半的产物，报 `Unexpected end of input`——随机红、换台机器复现不了。第一次用 `process.pid` 隔离**没有修好**：vitest 默认的 worker 池是 `worker_threads`，多个 worker 是同一进程里的线程，pid 完全相同。改用随机后缀后 8 次连跑稳定 |
+
+另外补了两处健壮性：`toPrepareArtifact` 的 `classifyFile` 从「可选、缺失则全部按 reviewed 处理」改为必传（缺失即抛错）——那个兜底一旦被忘掉，lockfile / vendor / 生成文件会统统送进模型，那几条误报陷阱用例静默失效而指标看着正常；以及 `run-evaluation.mjs` 主流程此前一行都没被执行过（缺 key 时首步即退出），新增 `--base-url` 与 `lib/run-evaluation.test.mjs`，对着本地 mock 跑完整流程（参数解析、指标汇总、六道门槛、退出码、上游 500 → incomplete），不花钱也不依赖网络。
+
+### 机器人自己审出来的 2 条（PR #8，2026-08-11）
+
+本仓库的 PR Review Swarm 审了这个 PR，给出 2 条 finding，逐条核过**都成立**，已在 `c7b3d63` 落实。值得单独记一笔：这是机器人第一次在真实 PR 上给出经得起复核的意见。
+
+| # | 缺陷 | 位置 | 影响 |
+|---|---|---|---|
+| 7 | 空白 `DEEPSEEK_API_KEY` 未被视为缺失 | `benchmarks/run-evaluation.mjs` | workflow 里写的是 `${{ secrets.DEEPSEEK_API_KEY }}`：仓库没配时展开成空串（`!apiKey` 能挡住），但配错成一串空格时挡不住，会带着无效凭据一路跑到 API 调用才失败——报出来的是「上游 401」，掩盖了真正的原因「你没配 key」 |
+| 8 | 单轮 `runAnalysis` 抛异常会中断整轮评测 | `benchmarks/run-evaluation.mjs` | `runAnalysis` 把绝大多数故障降级成 `anyRequiredStageFailed`，但不是全部（verifier 抛出的非 `VerifierUnavailableError` 会原样上抛）。让它冒到最外层，已跑完的用例指标一并丢失，输出里只剩一句「评测执行失败」，无法分辨是脚本坏了还是被测系统在某个用例上炸了。改为记成一轮 incomplete：门槛照样红，但带着用例名、轮次和原因 |
+
+顺带把 incomplete 的判据从脚本挪进 `lib/metrics.mjs`（`isIncompleteRun` / `incompleteRunFor`）——「什么算一次完整审核」和召回率怎么算是同一层语义，该和其他指标规则一起被测试。缺陷 8 的防御分支很难从 HTTP mock 触发（管线内部几乎全降级了），把结果构造抽成纯函数之后可以直接单测形状：漏掉 `anyRequiredStageFailed` 会让一次抛异常的运行被当成「干净的零 finding 审核」，那正是最危险的静默通过。
+
 ## 与计划的偏差（均以源码/真实约束为准）
 
 1. **Task 1.1** 「每个 job 都显式声明 permissions」按原样会红：`ci.yml` 走 workflow 级声明。拆成两条——信任链 workflow 要求 job 级，其余只要求不吃仓库默认权限。`ci.yml` 同样排除在 Task 1.3 的 pin 范围外（计划自身已授权）。
@@ -125,9 +152,41 @@
 7. **Task 6.1** 计划把 409 与 422 并列为"按重试策略处理"。按真实语义拆开：409 是并发冲突可重试；422 表示请求不可处理，重试无意义且静默吞掉会藏起真正的载荷错误。
 8. **Task 6.2** 计划要求"摘要评论出现 commit 历史过长的降级说明"。watchdog job 没有 `issues: write`，为此扩权会违反硬禁令 6。改为 `core.warning` 写进 job 日志。
 9. **Task 7.3 / 7.4** 计划归在 nightly，归类理由是"跑得慢"。这两组是毫秒级用例，放进 PR 阻塞通道价值更高，故留在默认通道。
+10. **Task 9.1** 计划只列了真阳性 12 条、真阴性 9 条，按"至少 1:1"的自订要求会差 3 条。补了 `swift-optional-chaining-safe` / `go-error-checked-via-helper` / `documented-nolint-suppression` / `moved-code-no-semantic-change` 四条真阴性，最终 13 真阳 / 14 真阴。
+11. **Task 9.2** 计划的 `thresholds.json` 没有行号容差项。精确到行会把"模型其实找到了、但指在函数签名行"判成漏报 + 误报的双重惩罚，让召回率失真。新增显式的 `line_tolerance: 2`（category 仍要求精确相等），是配置项而非藏在代码里的魔数。
+12. **Task 9.2** 的 `max_cost_usd_per_pr` / `max_p95_latency_ms` 在计划里没有数据来源——`sendStructuredRequest` 只返回业务 JSON，API 的 `usage` 字段到不了调用方。改为在 `DeepSeekClientOptions.fetchImpl` 这个既有注入点上包一层计量（`lib/usage-meter.mjs`），**不为评测改动生产代码**。读不到 `usage` 时计入 `missingUsage` 并判定门槛未生效，而不是静默按 0 计算——否则 API 改字段名之后成本门槛会永远绿灯。
+13. **误报与陷阱命中取「最差一轮」而非均值**（计划未规定聚合方式）。误报是这个产品的头号杀手，用均值会把"每五轮爆一次"稀释成看着还行的小数。召回率仍取均值，它衡量的是典型能力。
 
 ## 阻塞项与明确不做的部分
 
-- **Task 9.1 / 9.3 未做**：`benchmarks/run-evaluation.mjs` 是个桩（`const findings = []` + TODO），从不调用 analyze 管线。在它接上真实管线之前，新增用例无从验证、稳定性无从测量。已把这件事本身诚实化：`--gate` 模式在桩状态下直接以退出码 1 拒绝给绿灯，且**刻意不**接进 `nightly.yml`（接进去只能得到恒红或恒绿，两者都没有信息量）。顺带修掉一个真实缺陷：原先的桩模式是从"命中数为 0"反推的，于是一次真实但召回率为 0 的运行会被当成桩而静默放行。
+- **Task 9.1 / 9.3 的阻塞项已解除**（2026-08-05）：`run-evaluation.mjs` 原先是个桩（`const findings = []` + TODO），从不调用 analyze 管线；新增用例无从验证、稳定性无从测量。现已接上真实管线——`benchmarks/lib/pipeline.mjs` 用 action 自己的 esbuild 把 `action/src` 现场打成 bundle，评测跑的是和 `npm run build` 同一份源码，而不是一套为了好测而写的平行实现。`--gate` 在缺 `DEEPSEEK_API_KEY` 时仍然直接失败，不退化成恒绿空跑。
 - **Task 2.2 的第 4 点未做**（"注入载荷不会被原样写进 Review body"）：PR 描述本就不进 Review body，而 finding 的 `evidence` 进 Review body 是设计意图。为它造一条"必须转义"的规则等于凭空发明需求，**设计上不适用**。若将来确定要防"二次注入下游工具"，那是一个新需求而非现有规格的补测。
+- **首轮真实模型评测已跑过（2026-08-11），查出两个生产缺陷，门槛值仍待复核**：在中央仓库用真实 `DEEPSEEK_API_KEY` 跑通（`go-missing-error-check`，2 轮 + 3 轮）。评测机制本身工作正常——secret 可读、esbuild bundle 在 CI 能构建、真实 API 能通、六个指标都算得出来、计量层正常（$0.0023 / 5 次请求）。但指标本身是坏的，原因不在评测层：
+
+  - **[#9] `buildShardContent` 不给模型任何行号锚点** → 召回率 0%。三轮共 16 个候选**全部**被 `validateDeterministicEvidence` 拒绝：模型报 2/3/4/5/8/10/12/13/34/35/45，而该 hunk 的真实范围是 15..25。送给模型的内容里既没有 `@@` 头也没有行号，而校验器要求 `line` 落在 `[newStart, newStart+newLines-1]` 内——模型没有任何途径知道真实行号。这不是夹具问题：本仓库机器人审 PR #8 时同样有一条 finding 因定位不到行而降级成「未能定位到具体行」。**系统在真实 PR 上的有效召回率可能一直接近 0**，而此前无人发现——沙盒 PR #5/#6 验证的是流程能走通（Check 能终结、Review 能发出），没有对账 finding 是否落到正确位置；`analyze.test.ts` 等单测则都是注入构造好的候选，行号由测试自己给对，正好绕过这个缺口。
+  - **[#10] 畸形 tool-call arguments 不重试** → incomplete 率远超 `max_incomplete_ratio: 0.1`。4 次观察里 3 次因 `deepseek-client: tool call arguments are not valid JSON` 判为 incomplete，其中两次是真实生产审核。根子是处理不一致：`ExpertOutputSchemaError` 有重试（注释自称 "empirically stochastic model-formatting glitch"），而这个归为 `DeepSeekResponseError` 不重试——「重试没有意义」对空响应体成立，对畸形 tool-call arguments 不成立。
+
+  **两个缺陷已修并在真实模型上复测（`895c5d4` / `d548ee9`）**：`go-missing-error-check` 召回率 0% → **100%**（候选归宿从 `rejected_deterministic=16` 变为 `confirmed=5`），incomplete 比例 50% → **0%**，`historical-issue-not-introduced` 误报 3 → **0**、抖动 1.00 → **0.00**。
+
+  修 #9 的过程中还查出**第三个缺陷，在评测层自己身上**：行号修好后召回率仍是 0%，因为评测拿 `category` 做精确匹配——模型返回 `error-handling`，expected 写 `correctness`。但 `candidate-finding.schema.json` 里 category 是 `{type:"string", minLength:1}` 自由文本，设计文档 L139 也写明它「仅用于排序、呈现和统计，不决定是否阻塞」。那条匹配规则是评测自己发明的，不是系统契约。真阴性侧的后果更严重：模型确实踩了陷阱（报出 `helpers.ts:8` 那处历史遗留的 eval），却因 category 措辞不符被记成普通误报——**「命中 must_not_find 即报红」这条门槛因此永远不可能触发**，一条本该最灵敏的护栏被自己关掉了。已改为只按 path + line（带容差）匹配；`findingKey` 同理去掉 category，否则措辞抖动会让指标恒定贴近 1.0，门槛永远红也就永远不再提供信息。
+
+- **门槛已按实测分布定基线（2026-08-13）**：三轮全量评测（各 27 用例 × 3 轮、约 360 次请求、$0.07/轮），推导过程见 [`docs/plans/2026-08-13-threshold-baseline-and-dedup-fix.md`](../../../docs/plans/2026-08-13-threshold-baseline-and-dedup-fix.md)，逐项依据写在 `benchmarks/thresholds.json` 的 `_baseline_*` 注释里。
+
+  | 指标 | 轮 1（无 context） | 轮 2（补 context） | 轮 3（修去重） | 定值 |
+  |---|---|---|---|---|
+  | 召回率 | 80.2% | 91.4% | 88.9% | ≥0.82 |
+  | 误报（最差一轮） | 5 | 5 | 4 | ≤5 |
+  | 陷阱命中 | 1 | 1 | 1 | ≤1（#12 已知） |
+  | incomplete 比例 | 1.2% | 0.0% | 0.0% | ≤0.05 |
+  | 结果抖动 | 0.332 | 0.168 | 0.241 | ≤0.35 |
+  | p95 端到端延迟 | 31.2s | 31.7s | 29.3s | ≤300s（不变） |
+  | 成本/PR | $0.0027 | $0.0029 | $0.0030 | ≤$0.5（不变） |
+
+  轮 1 含已知夹具缺陷（缺 context），不计入基线。**补齐 23 份 `context/` 全文让召回率 +11.2pp、抖动减半**——原先那 0.332 里有一半是 verifier 因「拿不到文件内容」随机拒绝造成的**假**抖动，不是模型真的不稳定。
+
+  **第四个缺陷（arbiter 去重失效，`0a5ae03`）**：`groupKey` 用 `path|line|category` 去重，而 category 是自由文本，于是同一行的同一个问题因措辞不同变成多条 finding——实测 `webhook.go:9` 同时收到 `[hardcoded credential]` 与 `[hardcoded-credential]`（只差一个连字符），`pool.go:15` 收到四条不同措辞。用户侧就是同一行代码收到多条 inline 评论，这本身就是这个产品最招人烦的失败模式。改为 `path|line`；代价是同一行上两个真正不同的问题会被并成一条，这个取舍是有意的（一行同时有两个独立缺陷远比措辞抖动罕见），被合并的条目在 `internalDiagnostics` 里带 `mergedIntoId`，不会静默消失。
+
+  修完后 per-case 误报明显下降（`hardcoded-credential` 5→2、`insecure-random` 3→0、`go-missing-error-check` 3→2），但**总召回率 91.4%→88.9%、抖动 0.168→0.241 反而变差**。这两项与去重无关：合并按 `path|line` 分组，组内成员这两个字段必然相同，所以合并只减少「同一位置的重复条目数」，减不掉位置的种类——而匹配规则与抖动度量都只看 `(path, line)` 集合。反向证据在同一批数据里：`historical-issue-not-introduced` 的误报从 0 涨到 1，而去重只减不增。结论是轮间噪音，已把这条推理写成不变式断言（`a613e15`），免得下一次指标下降再也分不清是回归还是噪音。
+
+  **仍然超标的一项**：陷阱命中（issue #12，模型不区分本次引入与历史遗留）。该门槛从「>0 即红」改为可配置并暂定 1，因为一条永远红的门槛等于没有门槛——红灯疲劳之后没人会再看它。#12 修完必须删掉 `max_must_not_find_hits` 键，`checkThresholds` 缺键时自动回落到 0，这条由单测锁住。另有 issue #11（retain cycle 识别率过低，`swift-retain-cycle` 三轮全 0% 且零候选零误报）。
 - **计划附录 A 的 5 项仍需沙盒人工验证**，本轮未覆盖，理由不变（fork PR 的真实凭据可见性、分支保护真实拒绝 dismiss、`cancel-in-progress` 真实时序、required check 真实门禁、真实模型在注入语料下的行为）。

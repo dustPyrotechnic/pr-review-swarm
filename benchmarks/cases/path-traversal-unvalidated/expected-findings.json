@@ -1,0 +1,8 @@
+[
+  {
+    "path": "internal/handler/download.go",
+    "line": 28,
+    "category": "security",
+    "must_find": true
+  }
+]

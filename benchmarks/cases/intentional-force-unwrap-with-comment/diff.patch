@@ -1,0 +1,16 @@
+diff --git a/Sources/App/AppDelegate.swift b/Sources/App/AppDelegate.swift
+index 1a2b3c4..5d6e7f8 100644
+--- a/Sources/App/AppDelegate.swift
++++ b/Sources/App/AppDelegate.swift
+@@ -12,5 +12,11 @@ class AppDelegate: UIResponder {
+     var window: UIWindow?
+ 
++    func mainStoryboard() -> UIStoryboard {
++        // Main.storyboard 由 Xcode 构建期保证存在，缺失属于打包事故，
++        // 此处刻意让它立即崩溃而不是静默降级到一个空界面。
++        return UIStoryboard(name: "Main", bundle: nil)
++    }
++
+     func applicationDidFinishLaunching(_ application: UIApplication) {
+         window?.makeKeyAndVisible()
+     }

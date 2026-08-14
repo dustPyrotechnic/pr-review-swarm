@@ -1,0 +1,18 @@
+diff --git a/vendor/github.com/pkg/errors/errors.go b/vendor/github.com/pkg/errors/errors.go
+index 1a2b3c4..5d6e7f8 100644
+--- a/vendor/github.com/pkg/errors/errors.go
++++ b/vendor/github.com/pkg/errors/errors.go
+@@ -50,6 +50,13 @@ func New(message string) error {
+ 	}
+ }
+ 
++func Newf(format string, args ...interface{}) error {
++	return &fundamental{
++		msg:   fmt.Sprintf(format, args...),
++		stack: callers(),
++	}
++}
++
+ type fundamental struct {
+ 	msg string
+ 	*stack

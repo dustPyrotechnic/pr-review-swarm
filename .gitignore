@@ -4,3 +4,4 @@ node_modules/
 .env
 .codewhale/
 .worktrees/
+benchmarks/.build/

@@ -1,0 +1,11 @@
+diff --git a/internal/scheduler/cron.go b/internal/scheduler/cron.go
+index 1a2b3c4..5d6e7f8 100644
+--- a/internal/scheduler/cron.go
++++ b/internal/scheduler/cron.go
+@@ -30,4 +30,5 @@ func (s *Scheduler) Next(t time.Time) time.Time {
+ func (s *Scheduler) Next(t time.Time) time.Time {
+-	// 返回下一次执行时间
++	// Next 返回严格晚于 t 的下一次执行时间；t 恰好命中调度点时会跳到再下一次，
++	// 以免同一时刻被触发两遍。
+ 	return s.spec.Next(t)
+ }

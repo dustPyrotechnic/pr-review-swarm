@@ -1,0 +1,8 @@
+[
+  {
+    "path": "Classes/FeedViewController.m",
+    "line": 35,
+    "category": "correctness",
+    "must_find": true
+  }
+]

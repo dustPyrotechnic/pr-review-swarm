@@ -1,0 +1,8 @@
+[
+  {
+    "path": "internal/crypto/legacy.go",
+    "line": 22,
+    "category": "security",
+    "must_find": false
+  }
+]

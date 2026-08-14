@@ -1,0 +1,8 @@
+[
+  {
+    "path": "internal/auth/token_test.go",
+    "line": 18,
+    "category": "security",
+    "must_find": false
+  }
+]

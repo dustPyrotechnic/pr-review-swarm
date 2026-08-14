@@ -8,6 +8,23 @@ const SUBMIT_RESULT_FUNCTION_NAME = 'submit_result';
 export class DeepSeekTransientError extends Error {}
 export class DeepSeekResponseError extends Error {}
 
+/**
+ * The model returned a well-formed HTTP response with a `submit_result` tool
+ * call, but the `arguments` string isn't parseable JSON (truncated mid-object,
+ * stray token, …).
+ *
+ * Split out from DeepSeekResponseError because it is *empirically stochastic*,
+ * exactly like ExpertOutputSchemaError: the same request retried usually
+ * succeeds. Observed in production on 2026-08-11 taking down 3 of 4 reviews
+ * (including two real PR reviews), each degrading the whole run to
+ * `incomplete` — far above the 0.1 max_incomplete_ratio budget.
+ *
+ * "Content errors aren't worth retrying" still holds for the *other*
+ * DeepSeekResponseError cases (empty body, missing tool_calls, non-finite
+ * numbers): those repeat deterministically, so retrying only burns quota.
+ */
+export class DeepSeekMalformedResultError extends Error {}
+
 export interface StructuredRequestInput {
   model: string;
   systemPrompt: string;
@@ -216,7 +233,7 @@ export function createDeepSeekClient(options: DeepSeekClientOptions): DeepSeekCl
             `deepseek-client: tool call arguments contain a non-finite number (${err.literal})`,
           );
         }
-        throw new DeepSeekResponseError(
+        throw new DeepSeekMalformedResultError(
           'deepseek-client: tool call arguments are not valid JSON',
         );
       }

@@ -38,8 +38,25 @@ export interface ArbiterResult {
   internalDiagnostics: InternalDiagnosticEntry[];
 }
 
+// Deliberately excludes `category`. It is `{"type":"string","minLength":1}` in
+// candidate-finding.schema.json — free text — and the design doc (L139) states
+// that severity/confidence/category are "仅用于排序、呈现和统计，不决定是否阻塞".
+// Keying dedup on a field the model rewords every run is the same as not
+// deduplicating at all.
+//
+// Measured in the 2026-08-13 full evaluation: the model reported
+// "hardcoded credential" and "hardcoded-credential" on the same line — one
+// hyphen apart, two separate findings. pool.go:15 collected four wordings
+// (concurrency / concurrency-race / unbounded-goroutines /
+// unnecessary-complexity). The user-visible result is several inline comments
+// stacked on one line, which is this product's most irritating failure mode.
+//
+// The cost is that two genuinely distinct problems on the same line collapse
+// into one. That trade is intentional: one line carrying two independent
+// defects is far rarer than wording drift, and the merged-away entry still
+// appears in internalDiagnostics with mergedIntoId — it is not silently lost.
 function groupKey(finding: CandidateFinding): string {
-  return `${finding.path}|${finding.line}|${finding.category}`;
+  return `${finding.path}|${finding.line}`;
 }
 
 export function arbitrate(candidates: VerifiedCandidate[]): ArbiterResult {

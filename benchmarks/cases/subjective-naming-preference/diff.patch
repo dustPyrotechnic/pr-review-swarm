@@ -1,0 +1,15 @@
+diff --git a/internal/report/builder.go b/internal/report/builder.go
+index 1a2b3c4..5d6e7f8 100644
+--- a/internal/report/builder.go
++++ b/internal/report/builder.go
+@@ -11,4 +11,10 @@ func BuildReport(rows []Row) Report {
+ 	r := Report{}
+ 
++	n := len(rows)
++	if n == 0 {
++		return r
++	}
++	r.Total = n
++
+ 	return r
+ }

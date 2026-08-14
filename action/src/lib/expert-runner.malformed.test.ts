@@ -136,3 +136,133 @@ describe('合法但需要特殊处理的模型输出', () => {
     await expect(runExpert(expertInput(read('maxitems-exceeded.txt')))).rejects.toThrow();
   });
 });
+
+/**
+ * #10：畸形 tool-call arguments 是随机的模型格式故障，和 schema 不合规同性质，
+ * 却此前不重试——整轮审核因此降级为 incomplete。实测 4 次里有 3 次中招（含两次
+ * 真实生产审核），远超 max_incomplete_ratio 的 0.1。
+ */
+describe('模型格式故障的重试边界（#10）', () => {
+  const VALID = JSON.stringify({
+    shard_id: 'shard-1',
+    agent: 'generic-security',
+    candidate_findings: [],
+    coverage_complete: true,
+  });
+
+  /** 按调用序依次返回给定的响应体构造函数。 */
+  function clientReturningSequence(bodies: Array<() => Response>) {
+    let n = 0;
+    return createDeepSeekClient({
+      apiKey: 'test-key',
+      maxRetries: 0,
+      sleep: async () => {},
+      fetchImpl: async () => {
+        const body = bodies[Math.min(n++, bodies.length - 1)];
+        if (!body) throw new Error('clientReturningSequence: 序列为空');
+        return body();
+      },
+    });
+  }
+
+  const toolCallBody = (rawArguments: string) => () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          { message: { tool_calls: [{ function: { name: 'submit_result', arguments: rawArguments } }] } },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+
+  function inputWith(client: ReturnType<typeof createDeepSeekClient>, maxSchemaRetries: number) {
+    return {
+      shardId: 'shard-1',
+      agentName: 'generic-security',
+      systemPromptSkills: ['## Checklist\n- security item'],
+      shardContent: 'File: src/foo.ts\n+const x = 1;',
+      model: 'deepseek-chat',
+      client,
+      maxCandidateFindingsPerAgentPerShard: 30,
+      maxSchemaRetries,
+      retrySleep: async () => {},
+    };
+  }
+
+  it('arguments 不是合法 JSON 时重试，下一次成功即整轮成功', async () => {
+    const client = clientReturningSequence([
+      toolCallBody('{"shard_id": "shard-1", "agent": '), // 截断的 JSON
+      toolCallBody(VALID),
+    ]);
+
+    const result = await runExpert(inputWith(client, 1));
+
+    // 此前这里会抛 DeepSeekResponseError，整个 analyze 判 incomplete。
+    expect(result.output.coverage_complete).toBe(true);
+  });
+
+  it('maxSchemaRetries=0 时不重试，仍然失败', async () => {
+    const client = clientReturningSequence([toolCallBody('{oops'), toolCallBody(VALID)]);
+
+    await expect(runExpert(inputWith(client, 0))).rejects.toThrow();
+  });
+
+  it('重试次数用尽后仍失败，不会无限重试', async () => {
+    const client = clientReturningSequence([toolCallBody('{oops')]);
+
+    await expect(runExpert(inputWith(client, 2))).rejects.toThrow(/not valid JSON/);
+  });
+
+  it('空响应体不重试：那不是随机格式故障，重试没有意义', async () => {
+    let calls = 0;
+    const client = createDeepSeekClient({
+      apiKey: 'test-key',
+      maxRetries: 0,
+      sleep: async () => {},
+      fetchImpl: async () => {
+        calls += 1;
+        return new Response('', { status: 200, headers: { 'Content-Type': 'application/json' } });
+      },
+    });
+
+    await expect(runExpert(inputWith(client, 3))).rejects.toThrow();
+    expect(calls).toBe(1);
+  });
+
+  it('缺 tool_calls 不重试：结构性错误，重试同样拿不到结果', async () => {
+    let calls = 0;
+    const client = createDeepSeekClient({
+      apiKey: 'test-key',
+      maxRetries: 0,
+      sleep: async () => {},
+      fetchImpl: async () => {
+        calls += 1;
+        return new Response(JSON.stringify({ choices: [{ message: {} }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      },
+    });
+
+    await expect(runExpert(inputWith(client, 3))).rejects.toThrow();
+    expect(calls).toBe(1);
+  });
+
+  it('非有限数（1e309）不重试：那是确定性的内容缺陷，不是随机故障', async () => {
+    let calls = 0;
+    const client = createDeepSeekClient({
+      apiKey: 'test-key',
+      maxRetries: 0,
+      sleep: async () => {},
+      fetchImpl: async () => {
+        calls += 1;
+        return toolCallBody(
+          '{"shard_id":"s","agent":"generic-security","coverage_complete":true,"candidate_findings":[{"line":1e309}]}',
+        )();
+      },
+    });
+
+    await expect(runExpert(inputWith(client, 3))).rejects.toThrow();
+    expect(calls).toBe(1);
+  });
+});

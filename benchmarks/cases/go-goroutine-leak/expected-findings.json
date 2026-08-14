@@ -1,0 +1,8 @@
+[
+  {
+    "path": "internal/worker/pool.go",
+    "line": 18,
+    "category": "correctness",
+    "must_find": true
+  }
+]

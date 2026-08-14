@@ -1,0 +1,23 @@
+diff --git a/internal/store/write.go b/internal/store/write.go
+index 1a2b3c4..5d6e7f8 100644
+--- a/internal/store/write.go
++++ b/internal/store/write.go
+@@ -20,14 +20,18 @@ func (s *Store) SaveAll(items []Item) error {
+ 	tx, err := s.db.Begin()
+ 	if err != nil {
+ 		return err
+ 	}
+ 
++	for _, it := range items {
++		must(tx.Exec("INSERT INTO items(id, name) VALUES(?, ?)", it.ID, it.Name))
++	}
++
+ 	return tx.Commit()
+ }
+ 
+ // must 在 err 非空时回滚并 panic，由 SaveAll 的 defer recover 转成 error 返回。
+ func must(_ sql.Result, err error) {
+ 	if err != nil {
+ 		panic(txError{err})
+ 	}
+ }

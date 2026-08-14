@@ -1,0 +1,16 @@
+diff --git a/Sources/App/ProfileViewController.swift b/Sources/App/ProfileViewController.swift
+index 1a2b3c4..5d6e7f8 100644
+--- a/Sources/App/ProfileViewController.swift
++++ b/Sources/App/ProfileViewController.swift
+@@ -20,6 +20,11 @@ class ProfileViewController: UIViewController {
+         view.addSubview(avatarView)
+     }
+ 
++    func applyProfile(_ json: [String: Any]) {
++        let name = json["name"] as! String
++        nameLabel.text = name
++    }
++
+     func reload() {
+         loader.load()
+     }

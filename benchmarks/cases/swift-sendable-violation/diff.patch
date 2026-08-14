@@ -1,0 +1,15 @@
+diff --git a/Sources/Networking/ImageCache.swift b/Sources/Networking/ImageCache.swift
+index 1a2b3c4..5d6e7f8 100644
+--- a/Sources/Networking/ImageCache.swift
++++ b/Sources/Networking/ImageCache.swift
+@@ -8,5 +8,10 @@ final class ImageCache {
+     private var storage: [String: UIImage] = [:]
+ 
++    // 供后台队列直接调用
++    nonisolated func store(_ image: UIImage, for key: String) {
++        storage[key] = image
++    }
++
+     func image(for key: String) -> UIImage? {
+         return storage[key]
+     }

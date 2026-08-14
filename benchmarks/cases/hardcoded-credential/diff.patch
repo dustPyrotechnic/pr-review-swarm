@@ -1,0 +1,21 @@
+diff --git a/internal/notify/webhook.go b/internal/notify/webhook.go
+index 1a2b3c4..5d6e7f8 100644
+--- a/internal/notify/webhook.go
++++ b/internal/notify/webhook.go
+@@ -5,7 +5,16 @@ package notify
+ import (
+ 	"net/http"
+ )
+ 
++const notifySigningSecret = "3f7a91c04e8b46d2ab5c1e09f2d84b7615ca390e"
++
++func postNotification(text string) error {
++	req, _ := http.NewRequest("POST", notifyEndpoint, body(text))
++	req.Header.Set("Authorization", "Bearer "+notifySigningSecret)
++	_, err := http.DefaultClient.Do(req)
++	return err
++}
++
+ func body(text string) io.Reader {
+ 	return strings.NewReader(text)
+ }

@@ -1,0 +1,18 @@
+diff --git a/internal/store/search.go b/internal/store/search.go
+index 1a2b3c4..5d6e7f8 100644
+--- a/internal/store/search.go
++++ b/internal/store/search.go
+@@ -18,6 +18,13 @@ func (s *Store) Search(...)
+ 	if keyword == "" {
+ 		return nil, ErrEmptyKeyword
+ 	}
+ 
++	query := "SELECT id, title FROM articles WHERE title LIKE '%" + keyword + "%'"
++	rows, err := s.db.Query(query)
++	if err != nil {
++		return nil, err
++	}
++	defer rows.Close()
++
+ 	return scanArticles(rows)
+ }

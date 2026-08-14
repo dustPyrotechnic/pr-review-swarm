@@ -4,7 +4,7 @@ import { validate } from './schema-validator.js';
 import { dereferenceSchema } from './schema-dereferencer.js';
 import { wrapUntrustedContent } from '../prompts/data-boundary.js';
 import { withRetry } from './retry.js';
-import type { StructuredRequestInput } from './deepseek-client.js';
+import { DeepSeekMalformedResultError, type StructuredRequestInput } from './deepseek-client.js';
 
 // Thrown when a model response is well-formed JSON but doesn't conform to
 // the expert-output schema (e.g. coverage_complete returned as a string
@@ -70,11 +70,25 @@ export interface RunExpertResult {
   hardLimitHit: boolean;
 }
 
+// Telling the model the gutter's meaning is load-bearing, not decorative:
+// findings are validated against the real post-image line range, so a `line`
+// the model invented (or counted off from 1 within the excerpt) is rejected
+// outright. See buildShardContent in analyze.ts and issue #9.
+const LINE_NUMBER_CONTRACT =
+  'Each diff line is prefixed with its line number in the post-image — the file as it ' +
+  'will be *after* this PR. When you report a finding, `line` MUST be one of those ' +
+  'printed numbers and `side` MUST be "RIGHT". Do not count lines yourself and do not ' +
+  'guess: a finding whose line is not one of the printed numbers is discarded, however ' +
+  'correct the underlying observation may be. Removed lines are shown with a "-" marker ' +
+  'and no number because they do not exist in the post-image — you cannot anchor a ' +
+  'finding to them; anchor it to the surviving line that carries the problem instead.';
+
 function buildExpertSystemPrompt(agentName: string, skillBodies: string[]): string {
   return [
     `You are the "${agentName}" reviewer in a multi-expert pull request review swarm.`,
     'Only report issues introduced, exposed, expanded, or made reachable by this PR. ' +
       'Follow every checklist below.',
+    LINE_NUMBER_CONTRACT,
     ...skillBodies,
   ].join('\n\n');
 }
@@ -142,7 +156,13 @@ export async function runExpert(input: RunExpertInput): Promise<RunExpertResult>
   const data = await withRetry(() => requestAndValidate(input, systemPrompt, userPrompt), {
     maxRetries: input.maxSchemaRetries ?? 0,
     sleep: input.retrySleep,
-    isRetryable: (err) => err instanceof ExpertOutputSchemaError,
+    // Both of these are the same failure mode wearing different hats: the model
+    // produced a response that is structurally unusable *this time*, and the
+    // identical request usually succeeds on the next attempt. Retrying one but
+    // not the other was an inconsistency, not a policy — see
+    // DeepSeekMalformedResultError.
+    isRetryable: (err) =>
+      err instanceof ExpertOutputSchemaError || err instanceof DeepSeekMalformedResultError,
   });
 
   const hardLimitHit =

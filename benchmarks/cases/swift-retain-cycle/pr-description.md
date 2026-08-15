@@ -4,9 +4,9 @@ Add data loading functionality to ViewController with a delegate-based DataLoade
 
 ## Changes
 
-- Added `startDataLoading()` method to ViewController
+- ViewController now owns a `DataLoader` as a stored property
+- Added `startDataLoading()` that assigns `loader.delegate = self`
 - Updated DataLoader with async loading capability
-- ViewController sets itself as the delegate of DataLoader
 
 ## Testing
 

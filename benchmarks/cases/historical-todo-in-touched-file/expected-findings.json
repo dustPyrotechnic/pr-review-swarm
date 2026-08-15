@@ -1,7 +1,7 @@
 [
   {
     "path": "internal/billing/invoice.go",
-    "line": 28,
+    "line": 25,
     "category": "maintainability",
     "must_find": false
   }

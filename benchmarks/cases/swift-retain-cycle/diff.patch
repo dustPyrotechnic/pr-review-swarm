@@ -2,12 +2,16 @@ diff --git a/Sources/App/ViewController.swift b/Sources/App/ViewController.swift
 index abc123..def456 100644
 --- a/Sources/App/ViewController.swift
 +++ b/Sources/App/ViewController.swift
-@@ -10,6 +10,12 @@ class ViewController: UIViewController {
+@@ -7,9 +7,16 @@ class ViewController: UIViewController {
+ class ViewController: UIViewController {
++    private let loader = DataLoader()
++
+     override func viewDidLoad() {
+         super.viewDidLoad()
          setupUI()
      }
      
 +    func startDataLoading() {
-+        let loader = DataLoader()
 +        loader.delegate = self
 +        loader.load()
 +    }
@@ -15,7 +19,7 @@ index abc123..def456 100644
      func setupUI() {
          let label = UILabel()
          label.text = "Hello"
-@@ -20,4 +26,13 @@ class ViewController: UIViewController {
+@@ -20,4 +27,13 @@ class ViewController: UIViewController {
  class DataLoader {
      var delegate: DataLoaderDelegate?
      

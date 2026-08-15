@@ -5,13 +5,14 @@ protocol DataLoaderDelegate: AnyObject {
 }
 
 class ViewController: UIViewController {
+    private let loader = DataLoader()
+
     override func viewDidLoad() {
         super.viewDidLoad()
         setupUI()
     }
     
     func startDataLoading() {
-        let loader = DataLoader()
         loader.delegate = self
         loader.load()
     }

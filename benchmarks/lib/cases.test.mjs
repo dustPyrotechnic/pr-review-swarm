@@ -185,6 +185,54 @@ describe('benchmark 用例集', () => {
       expect(shardedPaths, name).toEqual([]);
     }
   });
+
+  // 2026-08-14 nightly（6e3d4c0，#12 的 prompt 已合入、#11 的 skill 还没有）
+  // 把这两条用例的真实形状钉死了。没有这两条，下一次改夹具很容易再写成
+  // 「看起来像缺陷、verifier 按所有权图否决」或「陷阱钉在新代码上、测的不是
+  // issue 里说的那件事」。
+  it('swift-retain-cycle: ViewController 必须属性持有 DataLoader，才构成引用环', () => {
+    // nightly 里 verifier 连拒 9 条 retain-cycle 候选，理由一致：
+    // `let loader = DataLoader()` 是局部变量，VC 不持有 loader，只有
+    // DataLoader → delegate 单向引用，不成环。把 must_find 钉在这种代码上，
+    // 召回率会永远是 0%——调 skill / prompt 都救不了，因为 verifier 否决是对的。
+    const c = loaded.get('swift-retain-cycle');
+    const source = c.contextContents['Sources/App/ViewController.swift'];
+    expect(source, 'swift-retain-cycle 必须提供 ViewController.swift 全文').toBeTruthy();
+    // 4 空格缩进 = 类体属性；8 空格 = 方法内局部变量。前者才让 VC 持有 loader。
+    expect(
+      source,
+      'ViewController 类体里必须有 DataLoader 存储属性（不能只是方法内的局部变量）',
+    ).toMatch(
+      /^    (?:(?:private|fileprivate|internal|public|open)\s+)?(?:let|var)\s+\w+[^\n]*=\s*DataLoader\s*\(/m,
+    );
+    expect(source).not.toMatch(/^        let\s+loader\s*=\s*DataLoader\s*\(/m);
+
+    const expected = c.expected.find((e) => e.must_find);
+    expect(expected, '必须有一条 must_find').toBeTruthy();
+    const expectedLine = source.split('\n')[expected.line - 1];
+    expect(
+      expectedLine,
+      `must_find 应落在 loader.delegate = self，实际第 ${expected.line} 行是：${expectedLine}`,
+    ).toMatch(/loader\.delegate\s*=\s*self/);
+  });
+
+  it('historical-todo-in-touched-file: 陷阱必须钉在那条 2019 TODO 上，而不是新函数', () => {
+    // issue #12 与 thresholds.json 都写明陷阱是「文件里那条 2019 年的 TODO」。
+    // 夹具却把 must_not_find 写在 FormatAmount（本次新增）上。nightly 里模型
+    // 给新函数报了 Naming clarity，被记成陷阱命中——测到的是风格挑剔，不是
+    // 「把历史遗留当成本次引入」。
+    const c = loaded.get('historical-todo-in-touched-file');
+    const source = c.contextContents['internal/billing/invoice.go'];
+    expect(source, 'historical-todo 必须提供 invoice.go 全文').toBeTruthy();
+    const traps = c.expected.filter((e) => !e.must_find);
+    expect(traps).toHaveLength(1);
+    const trapLine = source.split('\n')[traps[0].line - 1];
+    expect(
+      trapLine,
+      `陷阱应落在 TODO(2019) 那一行，实际第 ${traps[0].line} 行是：${trapLine}`,
+    ).toMatch(/TODO\(2019\)/);
+    expect(trapLine).not.toMatch(/func \(s \*Service\) FormatAmount/);
+  });
 });
 
 /**

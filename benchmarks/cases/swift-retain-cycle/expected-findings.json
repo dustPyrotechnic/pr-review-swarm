@@ -1,7 +1,7 @@
 [
   {
     "path": "Sources/App/ViewController.swift",
-    "line": 14,
+    "line": 16,
     "category": "correctness",
     "must_find": true
   }

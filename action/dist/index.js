@@ -34619,7 +34619,7 @@ var init_central_limits = __esm({
       maxFinalFindingsPerRun: 200,
       maxReviewBatchesPerRun: 20,
       maxPublishRetries: 5,
-      watchdogStaleThresholdMinutes: 30,
+      watchdogStaleThresholdMinutes: 10,
       maxCommitsPerPrForWatchdogScan: 250,
       maxPrFilesPerPage: 3e3,
       maxPrsPerWatchdogRun: 50,

@@ -64,6 +64,11 @@ async function finalizeStaleCheckRun(
 ): Promise<number | undefined> {
   if (run.status !== 'in_progress') return undefined;
 
+  // 这里只是候选准入门槛，不是安全保证 —— 真正防止误杀的是下面那道 run-status 核验：
+  // 只要所属 workflow run 还是 queued/in_progress，无论 Check 挂了多久都不会被终结。
+  // 阈值的作用只有两个：省掉对新鲜 Check 的 getWorkflowRun 调用，以及挡住 Actions API
+  // 与 Checks API 之间秒级的最终一致性窗口（run 已报 completed，但 status-finalize
+  // 写的结论还没传播到 check-runs 列表）。
   const startedAtMs = run.startedAtMs ?? 0;
   const ageMinutes = (input.nowMs - startedAtMs) / 60_000;
   if (ageMinutes < input.limits.watchdogStaleThresholdMinutes) return undefined;

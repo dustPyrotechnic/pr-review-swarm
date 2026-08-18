@@ -75,13 +75,13 @@ jobs:
 
 ### Watchdog 监听器
 
-每 10 分钟扫描一次超时未终结的 Check（默认超时阈值 30 分钟，见 `action/config/central-limits.json`），并支持手动触发排障：
+每 30 分钟扫描一次超时未终结的 Check（默认超时阈值 10 分钟，见 `action/config/central-limits.json`），并支持手动触发排障。孤儿 Check 最坏情况下的清理延迟约为「阈值 + 扫描间隔」= 40 分钟：
 
 ```yaml
 # .github/workflows/pr-review-watchdog.yml（目标仓库）
 name: PR Review Swarm Watchdog
-# 间隔与 watchdogStaleThresholdMinutes（30 分钟）对齐；扫得更密只会空跑，
-# 不会缩短恢复时间。最坏情况下孤儿 Check 的清理延迟约 60 分钟。
+# 扫描间隔决定的是「发现得多快」，与超时阈值相加才是最坏清理延迟。
+# 扫得更密只是成倍放大空跑轮次和撞上 GitHub 抖动的机会。
 on:
   schedule:
     - cron: '*/30 * * * *'

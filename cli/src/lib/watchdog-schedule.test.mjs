@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_WATCHDOG_INTERVAL, parseWatchdogInterval } from './watchdog-schedule.mjs';
+import { DEFAULT_WATCHDOG_INTERVAL, humanMinutes, parseWatchdogInterval } from './watchdog-schedule.mjs';
+
+describe('humanMinutes', () => {
+  it('never makes the reader divide by 60 themselves', () => {
+    expect(humanMinutes(40)).toBe('40m');
+    expect(humanMinutes(600)).toBe('10h');
+    expect(humanMinutes(610)).toBe('10h 10m');
+    expect(humanMinutes(1450)).toBe('24h 10m');
+  });
+});
 
 describe('parseWatchdogInterval', () => {
   it('defaults to 30 minutes', () => {
@@ -33,6 +42,12 @@ describe('parseWatchdogInterval', () => {
     expect(parseWatchdogInterval('10h').maxGapMinutes).toBe(600);
     // :00 and :45 — gaps of 45min and 15min.
     expect(parseWatchdogInterval('45m').maxGapMinutes).toBe(45);
+  });
+
+  it('reports the worst-case cleanup delay, threshold included', () => {
+    expect(parseWatchdogInterval('30m').worstCaseLabel).toBe('40m');
+    expect(parseWatchdogInterval('10h').worstCaseLabel).toBe('10h 10m');
+    expect(parseWatchdogInterval('10h').maxGapLabel).toBe('10h');
   });
 
   it('rejects an interval below the 30-minute floor', () => {

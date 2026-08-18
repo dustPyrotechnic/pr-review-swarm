@@ -90,7 +90,8 @@ async function main() {
   );
   console.log(
     `  Watchdog sweep: every ${summary.watchdogInterval.label}` +
-      ` (a stuck check clears within ~${summary.watchdogInterval.maxGapMinutes + 10} min worst case)`,
+      ` — a stuck check clears within ${summary.watchdogInterval.worstCaseLabel} worst case` +
+      ' (re-run with --watchdog-interval=<N>m|<N>h --force to change)',
   );
   console.log(`  Repo config: ${summary.repoConfigFile.join(', ') || '(already existed, left untouched)'}`);
   console.log(`  DEEPSEEK_API_KEY secret: set on ${summary.owner}/${summary.repo}`);

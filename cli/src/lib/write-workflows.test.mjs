@@ -53,7 +53,7 @@ describe('writeWorkflows', () => {
     const watchdog = fs.written['.github/workflows/pr-review-watchdog.yml'];
     expect(watchdog).toContain("- cron: '0 */10 * * *'");
     // 生成的注释必须写真实的最坏延迟（10 分钟阈值 + 10 小时最长间隙），不能只复述标称间隔。
-    expect(watchdog).toContain('10 小时 10 分钟');
+    expect(watchdog).toContain('10h 10m');
     expect(result.watchdogInterval.maxGapMinutes).toBe(600);
   });
 

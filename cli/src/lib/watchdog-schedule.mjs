@@ -9,6 +9,23 @@
 
 export const DEFAULT_WATCHDOG_INTERVAL = '30m';
 
+/** central-limits.json 的 watchdogStaleThresholdMinutes —— 用于把最坏延迟算给使用方看。 */
+export const STALE_THRESHOLD_MINUTES = 10;
+
+/**
+ * 把分钟数说成人话——"610 分钟"没人愿意在脑子里除以 60。
+ *
+ * 刻意用 `10h 10m` 这种中性写法：同一个字符串既要出现在英文的 CLI 摘要里，也要出现在
+ * 生成的 YAML 中文注释里，做两套格式化只会让两边慢慢漂移。
+ */
+export function humanMinutes(minutes) {
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours === 0) return `${rest}m`;
+  if (rest === 0) return `${hours}h`;
+  return `${hours}h ${rest}m`;
+}
+
 /** 下界：比 central-limits.json 的 watchdogStaleThresholdMinutes（10）更密没有意义，
  *  孤儿不到阈值不够格被终结，多出来的轮次纯属空跑。30m 已经留足余量。 */
 const MIN_MINUTES = 30;
@@ -47,16 +64,22 @@ export function parseWatchdogInterval(raw) {
     throw new Error(`--watchdog-interval must be at most 24h (got ${value}).`);
   }
 
-  if (unit === 'm') {
-    return { label: value, minutes, cron: `*/${amount} * * * *`, maxGapMinutes: maxGap(amount, 60) };
-  }
-  if (amount === 24) {
-    return { label: value, minutes, cron: '0 0 * * *', maxGapMinutes: MAX_MINUTES };
-  }
+  const [cron, maxGapMinutes] =
+    unit === 'm'
+      ? [`*/${amount} * * * *`, maxGap(amount, 60)]
+      : amount === 24
+        ? ['0 0 * * *', MAX_MINUTES]
+        : [`0 */${amount} * * *`, maxGap(amount, 24) * 60];
+
+  const worstCaseMinutes = STALE_THRESHOLD_MINUTES + maxGapMinutes;
+
   return {
     label: value,
     minutes,
-    cron: `0 */${amount} * * *`,
-    maxGapMinutes: maxGap(amount, 24) * 60,
+    cron,
+    maxGapMinutes,
+    maxGapLabel: humanMinutes(maxGapMinutes),
+    worstCaseMinutes,
+    worstCaseLabel: humanMinutes(worstCaseMinutes),
   };
 }

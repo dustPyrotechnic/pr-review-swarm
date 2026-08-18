@@ -1,14 +1,5 @@
 import { CENTRAL_REPO, DEFAULT_REF } from './resolve-ref.mjs';
-import { parseWatchdogInterval } from './watchdog-schedule.mjs';
-
-/** central-limits.json 的 watchdogStaleThresholdMinutes —— 只用于把最坏延迟算给使用方看。 */
-const STALE_THRESHOLD_MINUTES = 10;
-
-function humanMinutes(minutes) {
-  if (minutes % 60 === 0) return `${minutes / 60} 小时`;
-  if (minutes < 60) return `${minutes} 分钟`;
-  return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟`;
-}
+import { parseWatchdogInterval, STALE_THRESHOLD_MINUTES } from './watchdog-schedule.mjs';
 
 function refNote(ref) {
   const explanation =
@@ -44,7 +35,6 @@ jobs:
 }
 
 function watchdogYml(ref, interval) {
-  const worstCase = STALE_THRESHOLD_MINUTES + interval.maxGapMinutes;
   return `# .github/workflows/pr-review-watchdog.yml (installed by pr-review-swarm deploy)
 ${refNote(ref)}
 name: PR Review Swarm Watchdog
@@ -52,7 +42,7 @@ name: PR Review Swarm Watchdog
 # 的事件触发，只负责那些「不会再有下一次 PR 事件来收尾」的死角。
 #
 # 扫描间隔：${interval.label}（改用 \`pr-agent deploy --watchdog-interval=<N>m|<N>h --force\` 重装）
-# 最坏清理延迟 = 超时阈值 ${STALE_THRESHOLD_MINUTES} 分钟 + 最长扫描间隙 ${humanMinutes(interval.maxGapMinutes)} = ${humanMinutes(worstCase)}
+# 最坏清理延迟 = 超时阈值 ${STALE_THRESHOLD_MINUTES} 分钟 + 最长扫描间隙 ${interval.maxGapLabel} = ${interval.worstCaseLabel}
 #
 # 在这段延迟内，卡住的 Check 会一直显示"审核中"；若它是必需检查，对应 PR 也一直无法合并。
 # 间隔越大空跑轮次越少（省速率配额、少撞 GitHub 抖动），代价就是这个延迟越长。

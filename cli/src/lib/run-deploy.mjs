@@ -1,5 +1,5 @@
 export async function runDeploy(options, deps) {
-  const { deepseekKeyFlag, directPush, force, pinSha = false } = options;
+  const { deepseekKeyFlag, directPush, force, pinSha = false, watchdogInterval } = options;
   const { checkGhCli, detectRepo, resolveDeepseekKey, resolveRef, writeWorkflows, writeRepoConfig, setSecret, deployChanges } = deps;
 
   await checkGhCli();
@@ -7,7 +7,7 @@ export async function runDeploy(options, deps) {
   const key = await resolveDeepseekKey({ flagValue: deepseekKeyFlag });
   const { ref, mode: refMode } = await resolveRef({ pinSha });
 
-  const workflowsResult = writeWorkflows({ ref, force });
+  const workflowsResult = writeWorkflows({ ref, force, watchdogInterval });
   const repoConfigResult = writeRepoConfig({ force });
 
   await setSecret({ owner, repo, key });
@@ -23,6 +23,7 @@ export async function runDeploy(options, deps) {
     ref,
     refMode,
     workflowFiles: workflowsResult.written,
+    watchdogInterval: workflowsResult.watchdogInterval,
     repoConfigFile: repoConfigResult.written,
     secretSet: true,
     deployResult,

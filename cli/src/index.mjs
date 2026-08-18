@@ -25,6 +25,10 @@ Options:
   --force                Overwrite existing workflow/config files instead of erroring
   --pin-sha              Pin the installed workflows to an immutable commit SHA instead of
                          the moving v1 tag (upgrades then need a re-run of this command)
+  --watchdog-interval=<N>m|<N>h
+                         How often the watchdog sweeps for orphaned "in progress" checks
+                         (default 30m, min 30m, max 24h). Bigger = fewer empty runs, but a
+                         stuck check blocks its PR for longer. A quiet repo can go to 10h.
   --help                 Show this help text
 
 Run from inside the target repo's working directory, with a GitHub "origin" remote
@@ -56,7 +60,13 @@ async function main() {
   const fs = realFs();
 
   const summary = await runDeploy(
-    { deepseekKeyFlag: args.deepseekKey, directPush: args.directPush, force: args.force, pinSha: args.pinSha },
+    {
+      deepseekKeyFlag: args.deepseekKey,
+      directPush: args.directPush,
+      force: args.force,
+      pinSha: args.pinSha,
+      watchdogInterval: args.watchdogInterval,
+    },
     {
       checkGhCli,
       detectRepo,
@@ -77,6 +87,10 @@ async function main() {
       (summary.refMode === 'tag'
         ? ' (moving major tag — central releases roll out automatically)'
         : ' (immutable SHA — re-run with --force to upgrade)'),
+  );
+  console.log(
+    `  Watchdog sweep: every ${summary.watchdogInterval.label}` +
+      ` (a stuck check clears within ~${summary.watchdogInterval.maxGapMinutes + 10} min worst case)`,
   );
   console.log(`  Repo config: ${summary.repoConfigFile.join(', ') || '(already existed, left untouched)'}`);
   console.log(`  DEEPSEEK_API_KEY secret: set on ${summary.owner}/${summary.repo}`);

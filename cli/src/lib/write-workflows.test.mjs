@@ -36,17 +36,35 @@ describe('writeWorkflows', () => {
     expect(fs.written['.github/workflows/pr-review-watchdog.yml']).toContain(`reusable-pr-review-watchdog.yml@${sha}`);
   });
 
-  // 最坏清理延迟 = 超时阈值 + 扫描间隔，缩间隔的收益是线性的、很小的，代价（空跑轮次、
-  // 抖动碰撞面、速率配额）却是成倍的。这条把下界钉住，免得以后有人"为了更及时"随手
-  // 调回 */10 —— 那样每天多跑上百轮，换来的只是最坏延迟从 40 分钟变成 20 分钟。
-  it('schedules the watchdog no denser than every 30 minutes', () => {
+  it('defaults the watchdog sweep to every 30 minutes', () => {
     const fs = makeFs();
-    writeWorkflows({ fs, ref: 'v1', force: false });
+    const result = writeWorkflows({ fs, ref: 'v1', force: false });
+
+    expect(fs.written['.github/workflows/pr-review-watchdog.yml']).toContain(
+      "- cron: '*/30 * * * *'",
+    );
+    expect(result.watchdogInterval.label).toBe('30m');
+  });
+
+  it('honours a custom watchdog interval and reports the resulting worst case', () => {
+    const fs = makeFs();
+    const result = writeWorkflows({ fs, ref: 'v1', force: false, watchdogInterval: '10h' });
 
     const watchdog = fs.written['.github/workflows/pr-review-watchdog.yml'];
-    const cron = /- cron: '\*\/(\d+) \* \* \* \*'/.exec(watchdog);
-    expect(cron, 'watchdog 必须是 */N 分钟形式的 cron').not.toBeNull();
-    expect(Number(cron[1])).toBeGreaterThanOrEqual(30);
+    expect(watchdog).toContain("- cron: '0 */10 * * *'");
+    // 生成的注释必须写真实的最坏延迟（10 分钟阈值 + 10 小时最长间隙），不能只复述标称间隔。
+    expect(watchdog).toContain('10 小时 10 分钟');
+    expect(result.watchdogInterval.maxGapMinutes).toBe(600);
+  });
+
+  // 间隔非法时必须在碰任何文件之前就炸掉，否则会留下"新 pr-review.yml + 旧 watchdog"
+  // 这种半套配置。
+  it('rejects a bad interval without writing anything', () => {
+    const fs = makeFs();
+    expect(() => writeWorkflows({ fs, ref: 'v1', force: false, watchdogInterval: '5m' })).toThrow(
+      /at least 30m/,
+    );
+    expect(fs.writeFile).not.toHaveBeenCalled();
   });
 
   it('documents in each generated file how to move off the pinned ref', () => {

@@ -75,7 +75,15 @@ jobs:
 
 ### Watchdog 监听器
 
-每 30 分钟扫描一次超时未终结的 Check（默认超时阈值 10 分钟，见 `action/config/central-limits.json`），并支持手动触发排障。孤儿 Check 最坏情况下的清理延迟约为「阈值 + 扫描间隔」= 40 分钟：
+默认每 30 分钟扫描一次超时未终结的 Check（默认超时阈值 10 分钟，见 `action/config/central-limits.json`），并支持手动触发排障。孤儿 Check 最坏情况下的清理延迟 =「阈值 + 最长扫描间隙」，默认即 40 分钟。
+
+扫描间隔可在部署时按仓库活跃度调整，`30m` 到 `24h` 之间：
+
+```bash
+pr-agent deploy --watchdog-interval=10h --force   # 冷清的仓库，接受最坏 10 小时 10 分钟的清理延迟
+```
+
+间隔越大，空跑轮次越少（省 `GITHUB_TOKEN` 速率配额、少撞 GitHub 抖动）；代价是卡住的 Check 显示「审核中」的时间越长，若它是必需检查，对应 PR 在这段时间内无法合并。生成的 workflow 文件里会写明该间隔对应的实际最坏延迟。
 
 ```yaml
 # .github/workflows/pr-review-watchdog.yml（目标仓库）

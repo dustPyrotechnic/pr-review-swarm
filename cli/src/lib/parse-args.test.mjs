@@ -44,6 +44,17 @@ describe('parseArgs', () => {
     expect(parseArgs(['deploy', '--pin-sha']).pinSha).toBe(true);
   });
 
+  it('parses --watchdog-interval and leaves it undefined when absent', () => {
+    expect(parseArgs(['deploy', '--watchdog-interval=10h']).watchdogInterval).toBe('10h');
+    expect(parseArgs(['deploy']).watchdogInterval).toBeUndefined();
+  });
+
+  // 值的合法性由 watchdog-schedule.mjs 判定，但拼错的 flag 名必须在这里就炸，
+  // 不能被当成位置参数悄悄吞掉（--pin-sha 那个坑就是这么来的）。
+  it('rejects --watchdog-interval passed as a separate argument', () => {
+    expect(() => parseArgs(['deploy', '--watchdog-interval', '10h'])).toThrow(/unknown flag/i);
+  });
+
   it('throws on an unknown command', () => {
     expect(() => parseArgs(['frobnicate'])).toThrow(/unknown command/i);
   });

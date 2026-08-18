@@ -7,12 +7,15 @@ export function parseArgs(argv) {
   let directPush = false;
   let force = false;
   let pinSha = false;
+  let watchdogInterval;
 
   for (const arg of argv) {
     if (arg === '--help' || arg === '-h') {
       help = true;
     } else if (arg.startsWith('--deepseek-key=')) {
       deepseekKey = arg.slice('--deepseek-key='.length);
+    } else if (arg.startsWith('--watchdog-interval=')) {
+      watchdogInterval = arg.slice('--watchdog-interval='.length);
     } else if (arg === '--direct-push') {
       directPush = true;
     } else if (arg === '--force') {
@@ -29,7 +32,7 @@ export function parseArgs(argv) {
   const command = positional[0];
 
   if (!command) {
-    if (help) return { command: undefined, help, deepseekKey, directPush, force, pinSha };
+    if (help) return { command: undefined, help, deepseekKey, directPush, force, pinSha, watchdogInterval };
     throw new Error('no command given — run with --help to see usage');
   }
 
@@ -37,5 +40,5 @@ export function parseArgs(argv) {
     throw new Error(`unknown command: ${command}`);
   }
 
-  return { command, help, deepseekKey, directPush, force, pinSha };
+  return { command, help, deepseekKey, directPush, force, pinSha, watchdogInterval };
 }

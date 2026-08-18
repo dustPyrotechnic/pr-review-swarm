@@ -34254,20 +34254,6 @@ var init_trust_gate = __esm({
   }
 });
 
-// src/lib/github-client.ts
-function getOctokitFromInput() {
-  const token = core2.getInput("github_token", { required: true });
-  return (0, import_github.getOctokit)(token);
-}
-var core2, import_github;
-var init_github_client = __esm({
-  "src/lib/github-client.ts"() {
-    "use strict";
-    core2 = __toESM(require_core(), 1);
-    import_github = __toESM(require_github(), 1);
-  }
-});
-
 // src/lib/retry.ts
 function defaultIsRetryable(err) {
   const status = err?.status;
@@ -34301,6 +34287,60 @@ async function withRetry(fn, options) {
 var init_retry = __esm({
   "src/lib/retry.ts"() {
     "use strict";
+  }
+});
+
+// src/lib/github-client.ts
+function headerOf(err, name) {
+  const headers = err?.response?.headers;
+  const value = headers?.[name];
+  return typeof value === "string" ? value : void 0;
+}
+function isTransientGithubError(err) {
+  const status = err?.status;
+  if (status === void 0)
+    return true;
+  if (typeof status !== "number")
+    return false;
+  if (status === 429)
+    return true;
+  if (status >= 500 && status < 600)
+    return true;
+  if (status === 403) {
+    if (headerOf(err, "retry-after") !== void 0)
+      return true;
+    if (headerOf(err, "x-ratelimit-remaining") === "0")
+      return true;
+    const message = err?.message;
+    return typeof message === "string" && /rate limit|abuse/i.test(message);
+  }
+  return false;
+}
+function installTransientRetry(octokit, options) {
+  const retryOptions = {
+    maxRetries: options?.maxRetries ?? 3,
+    baseDelayMs: options?.baseDelayMs ?? 1e3,
+    isRetryable: options?.isRetryable ?? isTransientGithubError,
+    ...options?.sleep ? { sleep: options.sleep } : {}
+  };
+  octokit.hook.wrap(
+    "request",
+    async (request, requestOptions) => withRetry(() => request(requestOptions), retryOptions)
+  );
+}
+function getOctokitFromInput() {
+  const token = core2.getInput("github_token", { required: true });
+  const octokit = (0, import_github.getOctokit)(token);
+  installTransientRetry(octokit);
+  return octokit;
+}
+var core2, import_github;
+var init_github_client = __esm({
+  "src/lib/github-client.ts"() {
+    "use strict";
+    core2 = __toESM(require_core(), 1);
+    import_github = __toESM(require_github(), 1);
+    init_retry();
   }
 });
 
@@ -38622,21 +38662,30 @@ async function runWatchdog(octokit, input) {
   const prsToProcess = openPrs.slice(0, input.limits.maxPrsPerWatchdogRun);
   const results = [];
   for (const pr of prsToProcess) {
-    const commits = await octokit.paginate(octokit.rest.pulls.listCommits, {
-      owner: input.owner,
-      repo: input.repo,
-      pull_number: pr.number,
-      per_page: 100
-    });
-    const commitHistoryTruncated = commits.length >= input.limits.maxCommitsPerPrForWatchdogScan;
-    const finalizedPerCommit = await Promise.all(
-      commits.map((commit) => processCommitCheckRuns(octokit, input, commit.sha))
-    );
-    results.push({
-      prNumber: pr.number,
-      commitHistoryTruncated,
-      finalizedCheckRunIds: finalizedPerCommit.flat()
-    });
+    try {
+      const commits = await octokit.paginate(octokit.rest.pulls.listCommits, {
+        owner: input.owner,
+        repo: input.repo,
+        pull_number: pr.number,
+        per_page: 100
+      });
+      const commitHistoryTruncated = commits.length >= input.limits.maxCommitsPerPrForWatchdogScan;
+      const finalizedPerCommit = await Promise.all(
+        commits.map((commit) => processCommitCheckRuns(octokit, input, commit.sha))
+      );
+      results.push({
+        prNumber: pr.number,
+        commitHistoryTruncated,
+        finalizedCheckRunIds: finalizedPerCommit.flat()
+      });
+    } catch (err) {
+      results.push({
+        prNumber: pr.number,
+        commitHistoryTruncated: false,
+        finalizedCheckRunIds: [],
+        scanError: err instanceof Error ? err.message : String(err)
+      });
+    }
   }
   return results;
 }
@@ -38644,16 +38693,30 @@ async function run7() {
   const octokit = getOctokitFromInput();
   const owner = core8.getInput("owner", { required: true });
   const repo = core8.getInput("repo", { required: true });
-  const results = await runWatchdog(octokit, {
-    owner,
-    repo,
-    nowMs: Date.now(),
-    limits: {
-      watchdogStaleThresholdMinutes: central_limits_default.watchdogStaleThresholdMinutes,
-      maxCommitsPerPrForWatchdogScan: central_limits_default.maxCommitsPerPrForWatchdogScan,
-      maxPrsPerWatchdogRun: central_limits_default.maxPrsPerWatchdogRun
-    }
-  });
+  let results;
+  try {
+    results = await runWatchdog(octokit, {
+      owner,
+      repo,
+      nowMs: Date.now(),
+      limits: {
+        watchdogStaleThresholdMinutes: central_limits_default.watchdogStaleThresholdMinutes,
+        maxCommitsPerPrForWatchdogScan: central_limits_default.maxCommitsPerPrForWatchdogScan,
+        maxPrsPerWatchdogRun: central_limits_default.maxPrsPerWatchdogRun
+      }
+    });
+  } catch (err) {
+    core8.warning(
+      `watchdog: \u672C\u8F6E\u626B\u63CF\u6574\u4F53\u5931\u8D25\uFF0C\u5B64\u513F Check \u7559\u5F85\u4E0B\u4E00\u8F6E\u5904\u7406\uFF08\u8FDE\u7EED\u591A\u8F6E\u51FA\u73B0\u624D\u8BF4\u660E\u662F\u771F\u6545\u969C\uFF09\uFF1A${err instanceof Error ? err.message : String(err)}`
+    );
+    return;
+  }
+  const failedScans = results.filter((result) => result.scanError !== void 0);
+  if (failedScans.length > 0) {
+    core8.warning(
+      `watchdog: \u4EE5\u4E0B PR \u672C\u8F6E\u672A\u626B\u5B8C\uFF0C\u5B64\u513F Check \u7559\u5F85\u4E0B\u4E00\u8F6E\u5904\u7406\uFF1A` + failedScans.map((r) => `#${r.prNumber}\uFF08${r.scanError}\uFF09`).join("\u3001")
+    );
+  }
   const truncated = results.filter((result) => result.commitHistoryTruncated);
   if (truncated.length > 0) {
     core8.warning(

@@ -24,6 +24,8 @@ export interface WatchdogPrResult {
   prNumber: number;
   commitHistoryTruncated: boolean;
   finalizedCheckRunIds: number[];
+  /** 该 PR 本轮扫描失败的原因；缺省表示扫完了。 */
+  scanError?: string;
 }
 
 /**
@@ -141,24 +143,36 @@ export async function runWatchdog(
   const results: WatchdogPrResult[] = [];
 
   for (const pr of prsToProcess) {
-    const commits = (await octokit.paginate(octokit.rest.pulls.listCommits, {
-      owner: input.owner,
-      repo: input.repo,
-      pull_number: pr.number,
-      per_page: 100,
-    })) as Array<{ sha: string }>;
+    // 单个 PR 扫描失败（GitHub 抖动、PR 刚被删、分支被强推）不能带走同一轮里其它 PR
+    // 的孤儿 Check —— 那些 Check 会一直挂在 in_progress 上，直到下一轮才有机会被终结。
+    // 失败原因记进 scanError 交给 run() 上报，不静默丢弃（硬禁令 8）。
+    try {
+      const commits = (await octokit.paginate(octokit.rest.pulls.listCommits, {
+        owner: input.owner,
+        repo: input.repo,
+        pull_number: pr.number,
+        per_page: 100,
+      })) as Array<{ sha: string }>;
 
-    const commitHistoryTruncated = commits.length >= input.limits.maxCommitsPerPrForWatchdogScan;
+      const commitHistoryTruncated = commits.length >= input.limits.maxCommitsPerPrForWatchdogScan;
 
-    const finalizedPerCommit = await Promise.all(
-      commits.map((commit) => processCommitCheckRuns(octokit, input, commit.sha)),
-    );
+      const finalizedPerCommit = await Promise.all(
+        commits.map((commit) => processCommitCheckRuns(octokit, input, commit.sha)),
+      );
 
-    results.push({
-      prNumber: pr.number,
-      commitHistoryTruncated,
-      finalizedCheckRunIds: finalizedPerCommit.flat(),
-    });
+      results.push({
+        prNumber: pr.number,
+        commitHistoryTruncated,
+        finalizedCheckRunIds: finalizedPerCommit.flat(),
+      });
+    } catch (err) {
+      results.push({
+        prNumber: pr.number,
+        commitHistoryTruncated: false,
+        finalizedCheckRunIds: [],
+        scanError: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   return results;
@@ -169,16 +183,38 @@ export async function run(): Promise<void> {
   const owner = core.getInput('owner', { required: true });
   const repo = core.getInput('repo', { required: true });
 
-  const results = await runWatchdog(octokit, {
-    owner,
-    repo,
-    nowMs: Date.now(),
-    limits: {
-      watchdogStaleThresholdMinutes: centralLimits.watchdogStaleThresholdMinutes,
-      maxCommitsPerPrForWatchdogScan: centralLimits.maxCommitsPerPrForWatchdogScan,
-      maxPrsPerWatchdogRun: centralLimits.maxPrsPerWatchdogRun,
-    },
-  });
+  // watchdog 是每 10 分钟一轮的幂等巡检：这一轮扫不动，下一轮会重扫同样的 Check，
+  // 没有任何状态会因此丢失。所以整轮失败只写 warning、让 job 保持绿色，而不是
+  // setFailed —— 2026-08-17 那 5 次连红就是 GitHub 侧抖动（codeload 429、
+  // 请求超时 502、偶发 403）被顶层未捕获异常放大成的假故障告警。
+  // 注意：这里换来的是「连续多轮 warning 才代表真故障」，单轮 warning 不必追。
+  let results: WatchdogPrResult[];
+  try {
+    results = await runWatchdog(octokit, {
+      owner,
+      repo,
+      nowMs: Date.now(),
+      limits: {
+        watchdogStaleThresholdMinutes: centralLimits.watchdogStaleThresholdMinutes,
+        maxCommitsPerPrForWatchdogScan: centralLimits.maxCommitsPerPrForWatchdogScan,
+        maxPrsPerWatchdogRun: centralLimits.maxPrsPerWatchdogRun,
+      },
+    });
+  } catch (err) {
+    core.warning(
+      `watchdog: 本轮扫描整体失败，孤儿 Check 留待下一轮处理（连续多轮出现才说明是真故障）：` +
+        `${err instanceof Error ? err.message : String(err)}`,
+    );
+    return;
+  }
+
+  const failedScans = results.filter((result) => result.scanError !== undefined);
+  if (failedScans.length > 0) {
+    core.warning(
+      `watchdog: 以下 PR 本轮未扫完，孤儿 Check 留待下一轮处理：` +
+        failedScans.map((r) => `#${r.prNumber}（${r.scanError}）`).join('、'),
+    );
+  }
 
   // 扫描范围被截断意味着更老 commit 上的孤儿 Check 这一轮扫不到 —— 属于硬禁令 8 说的
   // "静默截断"，必须留下可观测记录。这里只写日志而不发摘要评论：watchdog job 只持有

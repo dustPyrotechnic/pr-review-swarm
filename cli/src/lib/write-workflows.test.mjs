@@ -36,6 +36,19 @@ describe('writeWorkflows', () => {
     expect(fs.written['.github/workflows/pr-review-watchdog.yml']).toContain(`reusable-pr-review-watchdog.yml@${sha}`);
   });
 
+  // 扫得比超时阈值更密的那几轮必然空跑：孤儿 Check 不到 30 分钟不够格被终结，
+  // 提前扫描既不会缩短恢复时间，又扩大了与 GitHub 抖动的碰撞面。这条把间隔钉住，
+  // 免得以后有人"为了更及时"随手调回 */10。
+  it('schedules the watchdog no denser than the 30-minute stale threshold', () => {
+    const fs = makeFs();
+    writeWorkflows({ fs, ref: 'v1', force: false });
+
+    const watchdog = fs.written['.github/workflows/pr-review-watchdog.yml'];
+    const cron = /- cron: '\*\/(\d+) \* \* \* \*'/.exec(watchdog);
+    expect(cron, 'watchdog 必须是 */N 分钟形式的 cron').not.toBeNull();
+    expect(Number(cron[1])).toBeGreaterThanOrEqual(30);
+  });
+
   it('documents in each generated file how to move off the pinned ref', () => {
     const fs = makeFs();
     writeWorkflows({ fs, ref: 'v1', force: false });

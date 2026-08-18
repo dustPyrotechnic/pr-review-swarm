@@ -80,9 +80,11 @@ jobs:
 ```yaml
 # .github/workflows/pr-review-watchdog.yml（目标仓库）
 name: PR Review Swarm Watchdog
+# 间隔与 watchdogStaleThresholdMinutes（30 分钟）对齐；扫得更密只会空跑，
+# 不会缩短恢复时间。最坏情况下孤儿 Check 的清理延迟约 60 分钟。
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch: {}
 
 jobs:

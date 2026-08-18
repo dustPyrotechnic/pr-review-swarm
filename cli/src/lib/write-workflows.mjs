@@ -37,9 +37,13 @@ function watchdogYml(ref) {
   return `# .github/workflows/pr-review-watchdog.yml (installed by pr-review-swarm deploy)
 ${refNote(ref)}
 name: PR Review Swarm Watchdog
+# 扫描间隔与 central-limits.json 的 watchdogStaleThresholdMinutes（30）对齐：孤儿 Check
+# 至少要挂满 30 分钟才够格被终结，扫得比这更密的那几轮必然空跑。密集空跑没有省下任何
+# 恢复时间，只是白白扩大与 GitHub 抖动的碰撞面（2026-08-17 的 5 次连红即出自空跑轮次），
+# 并挤占同一仓库 GITHUB_TOKEN 的速率配额。
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch: {}
 
 jobs:

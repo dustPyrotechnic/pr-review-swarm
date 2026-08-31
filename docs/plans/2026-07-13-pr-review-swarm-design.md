@@ -26,7 +26,7 @@
 
 ## 目标与定位
 
-构建一个供仓库所有者使用的 GitHub PR 审核机器人：多个专家 Agent 并行完成整次 PR 审核，统一验证和汇总全部有效问题后，一次性向 PR 提出者反馈。只要存在任一经验证的问题，就提交 `REQUEST_CHANGES`；审核完整且问题数为零时只提交 `COMMENT`（机器人永不提交 APPROVE，合并确认始终由人工完成），并在固定摘要评论中 @ 配置指定的负责人（默认 `dustPyrotechnic`，仓库可覆盖）。
+构建一个供仓库所有者使用的 GitHub PR 审核机器人：多个专家 Agent 并行完成整次 PR 审核，统一验证和汇总全部有效问题后，一次性向 PR 提出者反馈。只要存在任一经验证的问题，就提交 `REQUEST_CHANGES`（例外见「反馈内容」一节：未完整覆盖且只剩 low 时降级为 `COMMENT`）；审核完整且问题数为零时只提交 `COMMENT`（机器人永不提交 APPROVE，合并确认始终由人工完成），并在固定摘要评论中 @ 配置指定的负责人（默认 `dustPyrotechnic`，仓库可覆盖）。
 
 机器人只负责审核，不执行合并，也不申请 `contents: write` 等合并所需权限。最终是否采纳反馈、是否使用 ruleset bypass、以及是否合并，始终由人决定。目标仓库的 ruleset 应允许仓库所有者或指定维护者在必要时人工 bypass。
 
@@ -149,7 +149,9 @@ prepare 复验并锁定身份元组 `(head_repo, head_sha, base_repo, base_ref, 
 - `pass`：所有必需文件、分片、专家和 verifier 均成功，且最终 findings 数量为零。
 - `incomplete`：任一必需阶段超时、API 失败、Schema 失败、验证未完成、预算耗尽、硬上限触发或覆盖不完整。
 
-所有严重度的最终 findings 都必须反馈，不隐藏、不截断。任何最终 finding 都触发 `REQUEST_CHANGES`；severity 只影响排序和展示。纯主观偏好和与本次 PR 无关的历史问题不属于 finding。
+所有严重度的最终 findings 都必须反馈，不隐藏、不截断。纯主观偏好和与本次 PR 无关的历史问题不属于 finding。
+
+最终 finding 触发 `REQUEST_CHANGES`，**唯一例外**（2026-08-30 修订）：`verdict` 为 `incomplete`、全部 finding 都是 `low`、且 `incomplete_reasons` 不含 `hard_limit_hit` 时，降级为 `COMMENT`。理由是这个组合等于「我们知道自己没看全，也没发现要紧的问题」，用 `REQUEST_CHANGES` 卡住 PR 说不通；实测依据见 [`docs/field-reports/2026-08-30-ios-source-learning-pr9.md`](../field-reports/2026-08-30-ios-source-learning-pr9.md) 的 P7。排除 `hard_limit_hit` 是因为那意味着我们主动截断了分析，「截断之后不再阻塞」正是硬禁令 8 要防的。除此之外 severity 仍然只影响排序和展示，也不影响 `verdict` 本身。
 
 `incomplete` 时：
 
@@ -301,7 +303,7 @@ Check Run 的 `external_id` 包含 repo、PR、身份元组、run ID 和 attempt
 - 验证 custom action 源码、`dist/`、schemas 和 skills 的版本绑定，运行阶段不安装依赖。
 - 覆盖重命名、删除、二进制、生成文件、超大 diff、跨文件影响和部分 API 失败。
 - 验证审核期间没有任何 PR 评论；全部审核结束后才统一发布。
-- 验证任一最终 finding 都产生 `REQUEST_CHANGES`，零 finding 的完整审核只产生 `COMMENT`；任何情况下都不产生 `APPROVE`。
+- 验证任一最终 finding 都产生 `REQUEST_CHANGES`（例外：`incomplete` + 全 `low` + 非 `hard_limit_hit` 时为 `COMMENT`），零 finding 的完整审核只产生 `COMMENT`；任何情况下都不产生 `APPROVE`。
 - 验证 verifier 失败会产生 `incomplete`，已验证问题会被反馈，未验证候选不会被发布。
 - 验证 `REQUEST_CHANGES → 新 commit → COMMENT`（不是 APPROVE）完整生命周期。
 - 验证旧身份元组（含旧 `head_sha`、旧 `base_ref`）的延迟结果不会覆盖新结果。

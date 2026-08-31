@@ -14,7 +14,9 @@
 - [#11](https://github.com/dustPyrotechnic/pr-review-swarm/issues/11) **仍开**：补了 ObjC 清单和 Swift retain cycle 判据，并把夹具改成真引用环之后，`swift-retain-cycle` / `objc-retain-cycle-block` 召回从 0% / 33.3% 升到 **66.7%**，尚未稳定。
 - 误报仍偏高：找到真问题时会顺手多报几条低价值条目（真阴性 14 个里 13 个零误报，所以不是无差别乱报）。
 
-`publish` 按裁决发布 GitHub Review：有问题提交 `REQUEST_CHANGES`，没问题只提交 `COMMENT`（**机器人永不提交 APPROVE，合并与否始终由人工最终确认**）。
+**2026-08-30 首次外部真实 PR 实测**（[XiyouMobile3G-iOS/ios-source-learning#9](https://github.com/XiyouMobile3G-iOS/ios-source-learning/pull/9)，680 行 shell）：连跑 18 轮、62 条 inline finding，暴露出评测集完全没覆盖的一批问题 —— 19.4% 的 finding 在正文里自己论证了「不构成缺陷」却照样发布（5 条 high 里 3 条是这种）、5/17 轮因模型输出不合 schema 判 incomplete、同一个 head_sha 跑两次 findings 交集为 0、62 条评论上累计堆了 341 行「已被取代」横幅。完整记录见 [`docs/field-reports/2026-08-30-ios-source-learning-pr9.md`](docs/field-reports/2026-08-30-ios-source-learning-pr9.md)，修复见 [`docs/plans/2026-08-30-review-quality-hardening-plan.md`](docs/plans/2026-08-30-review-quality-hardening-plan.md)。代码侧已全部落地，**方差降幅与真实多轮表现尚未验证**。
+
+`publish` 按裁决发布 GitHub Review：有问题提交 `REQUEST_CHANGES`，没问题只提交 `COMMENT`（**机器人永不提交 APPROVE，合并与否始终由人工最终确认**）。2026-08-30 起有一个例外：审核未完整覆盖（`incomplete`）、剩下的 finding 全是 `low`、且不是因为命中硬上限时，降级为 `COMMENT` —— 「没看全 + 没发现要紧问题」不该卡住 PR。
 
 完整设计见 [`docs/plans/2026-07-13-pr-review-swarm-design.md`](docs/plans/2026-07-13-pr-review-swarm-design.md)，实施计划见 [`docs/plans/2026-07-18-pr-review-swarm-implementation-plan.md`](docs/plans/2026-07-18-pr-review-swarm-implementation-plan.md)，安全与集成测试对账见 [`action/test/integration/CHECKLIST.md`](action/test/integration/CHECKLIST.md)。给后续 agent 的仓库约定与下一步见根目录 [`AGENTS.md`](AGENTS.md) / [`CLAUDE.md`](CLAUDE.md)。
 

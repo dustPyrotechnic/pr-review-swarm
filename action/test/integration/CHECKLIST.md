@@ -16,7 +16,7 @@
 | 3 | 版本绑定 dist/schemas/skills，运行阶段不装依赖 | CI 配置锁定 | CI `build-dist-no-drift` job 对比 `dist/` 与源码重建结果；`action.yml` 无 npm install 步骤 |
 | 4 | 覆盖重命名、删除、二进制、生成文件、超大 diff、跨文件影响、部分 API 失败 | 单测覆盖 | `diff-parser.test.ts`、`file-classifier.test.ts`（生成文件/二进制）、`pr-files-pagination-guard.test.ts`（超大 diff/分页截断）、`publish.test.ts`"retries a transient createReview failure"（部分 API 失败） |
 | 5 | 审核期间没有任何 PR 评论；全部结束后才统一发布 | 单测覆盖（本轮新增） | `analyze.test.ts`"analyze.ts never holds GitHub write credentials" — 静态断言 `analyze.ts` 不 import `@actions/github`，物理上不可能在分析阶段发评论 |
-| 6 | 任一最终 finding 都产生 REQUEST_CHANGES；机器人永不提交 APPROVE，零 finding 的完整审核只发 COMMENT（人工仍需自行确认合并） | 单测覆盖 | `verdict.test.ts` `computeFinalReviewEvent` 全分支 + "never returns APPROVE for verdict=..." 锁；`publish.test.ts` "reports changes_requested with final_review_event REQUEST_CHANGES..."/"produces a schema-valid verdict summary for the pass case, with final_review_event COMMENT..."/"publish.ts never submits an approving Review" 源码锁 |
+| 6 | 任一最终 finding 都产生 REQUEST_CHANGES（例外：incomplete + 全 low + 非 hard_limit_hit → COMMENT，2026-08-30 规格修订）；机器人永不提交 APPROVE，零 finding 的完整审核只发 COMMENT（人工仍需自行确认合并） | 单测覆盖 | `verdict.test.ts` `computeFinalReviewEvent` 全分支 + "never returns APPROVE for verdict=..." 锁；`publish.test.ts` "reports changes_requested with final_review_event REQUEST_CHANGES..."/"produces a schema-valid verdict summary for the pass case, with final_review_event COMMENT..."/"publish.ts never submits an approving Review" 源码锁 |
 | 7 | verifier 失败产生 incomplete，已验证问题被反馈，未验证候选不发布 | 单测覆盖 | `analyze.test.ts`（VerifierUnavailableError → anyRequiredStageFailed）、`arbiter.test.ts` |
 | 8 | REQUEST_CHANGES → 新 commit → 恢复正常（COMMENT，不是 APPROVE）完整生命周期，旧 Review 正确被取代 | 单测覆盖（本轮新增，2026-07-23 按"机器人不提交 APPROVE"修订） | `test/integration/review-lifecycle.test.ts` |
 | 9 | 旧身份元组（含旧 head_sha、旧 base_ref）延迟结果不覆盖新结果 | 单测覆盖 | `publish.test.ts` "reports stale_cancelled when the re-fetched identity tuple no longer matches..." |
@@ -201,3 +201,18 @@ Task 9.x 落地后又走了一轮自审。这一层的缺陷有个共同特征�
   **#12 已关闭。** #11 好转但未完（仍有一轮 incomplete、verifier 会拒闭包表述、有一轮锚在属性行而不是 `delegate = self`）。全量 27×3 尚未在此次修复后重跑，因此 `max_must_not_find_hits: 1` 仍留在 `thresholds.json`——下次全量若陷阱仍为 0，按原约定删掉该键。
 
 - **计划附录 A 的 5 项仍需沙盒人工验证**，本轮未覆盖，理由不变（fork PR 的真实凭据可见性、分支保护真实拒绝 dismiss、`cancel-in-progress` 真实时序、required check 真实门禁、真实模型在注入语料下的行为）。
+
+- **审阅质量加固（2026-08-30，依据 [`docs/field-reports/2026-08-30-ios-source-learning-pr9.md`](../../../docs/field-reports/2026-08-30-ios-source-learning-pr9.md)）**：外部真实 PR 上连跑 18 轮暴露的问题，逐条对账如下。
+
+  | 项 | 现象 | 覆盖 |
+  |---|---|---|
+  | 自我否定 finding | 62 条里 12 条正文自称「不构成缺陷」仍发布，其中 3 条标 high | `self-refutation-gate.test.ts`（25 条，含 6 条防误杀反例）、`arbiter.test.ts` 两条 |
+  | review event 降级 | incomplete + 4 条全 low 仍发 REQUEST_CHANGES | `verdict.test.ts` 的 `computeFinalReviewEvent` 分支 + 两条新穷举（全 low 降级面、硬上限不降级） |
+  | 已合并 PR 仍审核 | 合并后 4 秒起流水线，2 分钟后在已合并 PR 上提交 CHANGES_REQUESTED | `status-start.test.ts` 四条（merged / closed-unmerged / 短路早于 repo config / open 仍审）；`cli/src/lib/write-workflows.mjs` 触发条件去掉 closed 与 edited |
+  | 横幅堆叠与分页 | 62 条评论累计 341 行横幅，单条最多 17 行；且 listReviewComments 未分页，第 31 条之后从未被处理 | `publish.test.ts` 的 `applySupersedeNotice` 五条 + 两条集成（62 条分页、已带横幅不重标） |
+  | 单 agent 失败中断整轮 | 5 个 incomplete 轮次全由一次模型格式抖动引发，findings 只剩 1/1/2 | `analyze.test.ts` 三条（跳过失败 agent、连续 3 次熔断、成功重置计数）；skill 加载失败仍立即停这一条保持通过 |
+  | schema 抖动 | source_agent 漏填 2 轮、verifier 缺 status 1 轮 | `expert-runner.test.ts` 两条（补齐 / 不覆盖模型已填值）、`verifier-client.test.ts` 六条（含「401 不重试」「缺 tool_calls 不重试」） |
+  | cross-file 绕过锚点 | 正文分析 progress.sh，评论却挂在 bootstrap.sh:210 | `deterministic-evidence-validator.test.ts` 三条新增；「跨文件声明永远拿不到 passed」保持通过 |
+  | 同输入方差 | 同一 head_sha 两轮 findings 交集为 0 | `deepseek-client.test.ts` 断言 temperature=0；**实际降幅待 benchmarks 的 `findingSetInstability` 前后对照**，尚未测量 |
+
+  **尚未验证的两项**：temperature=0 的方差降幅（需要评测前后对照），以及横幅/分页修复在真实多轮审核里的表现（需要下一次真实 PR）。

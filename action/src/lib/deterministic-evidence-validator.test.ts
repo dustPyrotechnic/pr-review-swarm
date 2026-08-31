@@ -91,11 +91,35 @@ describe('validateDeterministicEvidence', () => {
     expect(result.status).toBe('failed');
   });
 
-  it('defers cross-file causal claims to the verifier without evaluating line rules', () => {
+  // 原来这里断言的是「跨文件声明不做行号判定」—— 那正是模型绕过锚点校验的后门。
+  // 锚点规则对跨文件声明同样适用：没有任何 hunk 就没有可锚的改动行。
+  it('fails a cross-file causal claim when the file has no hunks at all', () => {
     const result = validateDeterministicEvidence(
       makeFinding({ line: 10, side: 'RIGHT', cross_file_causal_claim: true }),
       'src/foo.ts',
       [],
+    );
+
+    expect(result.status).toBe('failed');
+  });
+
+  it('defers a properly anchored cross-file causal claim to the verifier', () => {
+    const result = validateDeterministicEvidence(
+      makeFinding({ line: 10, side: 'RIGHT', cross_file_causal_claim: true }),
+      'src/foo.ts',
+      [
+        {
+          oldStart: 8,
+          oldLines: 1,
+          newStart: 8,
+          newLines: 3,
+          lines: [
+            { type: 'context', oldLine: 8, newLine: 8, content: 'unchanged' },
+            { type: 'add', newLine: 9, content: 'new line' },
+            { type: 'add', newLine: 10, content: 'target line' },
+          ],
+        },
+      ],
     );
 
     expect(result.status).toBe('deferred_to_verifier');
@@ -258,15 +282,35 @@ describe('introduced_by_pr 因果判定边界', () => {
     expect(r.reason).toMatch(/LEFT/);
   });
 
-  it('跨文件调用链声明：不由确定性校验放行，转交 verifier 复核', () => {
+  it('跨文件调用链声明：锚点合法时不由确定性校验放行，转交 verifier 复核', () => {
+    const r = validateDeterministicEvidence(
+      makeFinding({ line: 11, cross_file_causal_claim: true }),
+      'src/foo.ts',
+      [CHANGED_HUNK],
+    );
+    // 锚点落在改动行上，确定性层不给 passed —— 它只能是 deferred。
+    expect(r.status).toBe('deferred_to_verifier');
+  });
+
+  // 这条原先断言「行号越界也照样 deferred」，即模型只要声明跨文件就能绕过锚点
+  // 校验。锚点规则对跨文件声明同样适用，越界就是 failed。
+  it('跨文件声明的锚点越界时仍然 failed，不能靠声明绕过', () => {
     const r = validateDeterministicEvidence(
       makeFinding({ line: 9999, cross_file_causal_claim: true }),
       'src/foo.ts',
       [CHANGED_HUNK],
     );
-    // 注意行号是越界的，但因为标了跨文件声明，确定性层不做行号判定，
-    // 也**不会**给出 passed —— 它只能是 deferred。
-    expect(r.status).toBe('deferred_to_verifier');
+    expect(r.status).toBe('failed');
+  });
+
+  it('跨文件声明也不能锚到 LEFT 侧', () => {
+    const r = validateDeterministicEvidence(
+      makeFinding({ line: 10, side: 'LEFT', cross_file_causal_claim: true }),
+      'src/foo.ts',
+      [CHANGED_HUNK],
+    );
+    expect(r.status).toBe('failed');
+    expect(r.reason).toMatch(/LEFT/);
   });
 
   it('跨文件声明在确定性层永远拿不到 passed', () => {

@@ -30,10 +30,6 @@ export function validateDeterministicEvidence(
   filePath: string,
   fileHunks: DiffHunk[],
 ): DeterministicValidationResult {
-  if (finding.cross_file_causal_claim === true) {
-    return { status: 'deferred_to_verifier' };
-  }
-
   if (finding.path !== filePath) {
     return {
       status: 'failed',
@@ -62,7 +58,16 @@ export function validateDeterministicEvidence(
 
   for (const hunk of fileHunks) {
     if (isWithinChangedHunkRange(hunk, finding.side, finding.line)) {
-      return { status: 'passed' };
+      // 跨文件因果**声明**要交给 verifier 复核（设计文档 L87），但「锚点必须落在
+      // 本次 diff 改过的行上」这条规则对它同样适用。原实现在任何检查之前就
+      // return deferred，等于给了模型一条后门：只要声明 cross_file_causal_claim，
+      // path / side / 行号全都不再校验。2026-08-29 的 ios-source-learning#9 上
+      // 出现过正文整段分析 progress.sh、评论却挂在 bootstrap.sh:210 的 finding。
+      //
+      // 收紧的只是**锚点**，不是证据范围：跨文件证据继续走 causal_evidence_refs。
+      return finding.cross_file_causal_claim === true
+        ? { status: 'deferred_to_verifier' }
+        : { status: 'passed' };
     }
   }
 

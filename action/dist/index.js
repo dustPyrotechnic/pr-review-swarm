@@ -37403,9 +37403,6 @@ function isWithinChangedHunkRange(hunk, side, line) {
   return line >= hunk.oldStart && line <= hunk.oldStart + hunk.oldLines - 1;
 }
 function validateDeterministicEvidence(finding, filePath, fileHunks) {
-  if (finding.cross_file_causal_claim === true) {
-    return { status: "deferred_to_verifier" };
-  }
   if (finding.path !== filePath) {
     return {
       status: "failed",
@@ -37423,7 +37420,7 @@ function validateDeterministicEvidence(finding, filePath, fileHunks) {
   }
   for (const hunk of fileHunks) {
     if (isWithinChangedHunkRange(hunk, finding.side, finding.line)) {
-      return { status: "passed" };
+      return finding.cross_file_causal_claim === true ? { status: "deferred_to_verifier" } : { status: "passed" };
     }
   }
   return {

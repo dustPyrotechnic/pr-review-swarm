@@ -38291,8 +38291,10 @@ var init_summary_comment = __esm({
 // src/entrypoints/publish.ts
 var publish_exports = {};
 __export(publish_exports, {
+  applySupersedeNotice: () => applySupersedeNotice,
   buildPublishResult: () => buildPublishResult,
   executePublish: () => executePublish,
+  hasSupersedeBanner: () => hasSupersedeBanner,
   readAnalyzeArtifactFromFile: () => readAnalyzeArtifactFromFile,
   resolveEngineRevision: () => resolveEngineRevision,
   run: () => run5
@@ -38408,19 +38410,31 @@ async function fetchCurrentFileDiffs(octokit, params) {
   });
   return files.map((file) => parsePatch(file.filename, file.patch ?? ""));
 }
+function applySupersedeNotice(body, currentReviewSetId, tail = "\u3002") {
+  const notice = `\u26A0\uFE0F \u5DF2\u88AB\u65B0\u4E00\u8F6E\u5BA1\u6838\uFF08review_set_id=${currentReviewSetId}\uFF09\u53D6\u4EE3${tail}
+
+`;
+  return notice + body.replace(SUPERSEDE_BANNER_RE, "");
+}
+function hasSupersedeBanner(body) {
+  return SUPERSEDE_BANNER_RE.test(body ?? "");
+}
 async function supersedeOldReviewSets(octokit, params) {
   const staleReviews = params.reviews.filter((review) => {
     if (!isAuthoredByPublisher(review, params.publisherLogin))
+      return false;
+    if (hasSupersedeBanner(review.body))
       return false;
     const marker = decodeBatchMarker(review.body);
     return marker !== void 0 && marker.reviewSetId !== params.currentReviewSetId;
   });
   if (staleReviews.length === 0)
     return;
-  const { data: allComments } = await octokit.rest.pulls.listReviewComments({
+  const allComments = await octokit.paginate(octokit.rest.pulls.listReviewComments, {
     owner: params.owner,
     repo: params.repo,
-    pull_number: params.prNumber
+    pull_number: params.prNumber,
+    per_page: 100
   });
   for (const review of staleReviews) {
     const notice = `\u26A0\uFE0F \u5DF2\u88AB\u65B0\u4E00\u8F6E\u5BA1\u6838\uFF08review_set_id=${params.currentReviewSetId}\uFF09\u53D6\u4EE3\uFF0C\u8BF7\u4EE5\u4E0B\u65B9\u6700\u65B0 Review \u4E3A\u51C6\u3002
@@ -38448,7 +38462,11 @@ async function supersedeOldReviewSets(octokit, params) {
         repo: params.repo,
         pull_number: params.prNumber,
         review_id: review.id,
-        body: notice + (review.body ?? "")
+        body: applySupersedeNotice(
+          review.body ?? "",
+          params.currentReviewSetId,
+          "\uFF0C\u8BF7\u4EE5\u4E0B\u65B9\u6700\u65B0 Review \u4E3A\u51C6\u3002"
+        )
       });
     }
     const commentsForReview = allComments.filter((c) => c.pull_request_review_id === review.id);
@@ -38457,9 +38475,7 @@ async function supersedeOldReviewSets(octokit, params) {
         owner: params.owner,
         repo: params.repo,
         comment_id: comment.id,
-        body: `\u26A0\uFE0F \u5DF2\u88AB\u65B0\u4E00\u8F6E\u5BA1\u6838\uFF08review_set_id=${params.currentReviewSetId}\uFF09\u53D6\u4EE3\u3002
-
-${comment.body ?? ""}`
+        body: applySupersedeNotice(comment.body ?? "", params.currentReviewSetId)
       });
     }
   }
@@ -38632,7 +38648,7 @@ async function run5() {
   await core6.summary.addRaw(result.markdownSummary).write();
   core6.setOutput("verdict", JSON.stringify(result.verdictSummary));
 }
-var import_node_crypto2, core6, import_github5;
+var import_node_crypto2, core6, import_github5, SUPERSEDE_BANNER_RE;
 var init_publish = __esm({
   "src/entrypoints/publish.ts"() {
     "use strict";
@@ -38654,6 +38670,7 @@ var init_publish = __esm({
     init_inline_comment_locator();
     init_retry();
     init_summary_comment();
+    SUPERSEDE_BANNER_RE = /^(?:⚠️ 已被新一轮审核（review_set_id=[0-9a-f]+）取代[^\n]*\n\n)+/;
   }
 });
 

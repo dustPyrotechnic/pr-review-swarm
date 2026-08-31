@@ -215,6 +215,29 @@ async function fetchCurrentFileDiffs(
   return files.map((file) => parsePatch(file.filename, file.patch ?? ''));
 }
 
+// 横幅必须**覆盖**而不是追加。原实现无条件 `notice + 旧 body`，于是第 N 轮会给
+// 前 N-1 轮的每条评论再叠一行：ios-source-learning#9 跑到第 17 轮时，62 条 inline
+// 评论上累计了 341 行横幅，单条最多 17 行 —— 正文被推得完全看不见。
+//
+// review_set_id 是 computeReviewSetId 生成的 20 位小写 hex。正则同时覆盖两种线上
+// 文本：Review 正文的「…取代，请以下方最新 Review 为准。」和 inline 评论的「…取代。」，
+// 并且能一次剥掉整叠历史横幅。
+const SUPERSEDE_BANNER_RE =
+  /^(?:⚠️ 已被新一轮审核（review_set_id=[0-9a-f]+）取代[^\n]*\n\n)+/;
+
+export function applySupersedeNotice(
+  body: string,
+  currentReviewSetId: string,
+  tail = '。',
+): string {
+  const notice = `⚠️ 已被新一轮审核（review_set_id=${currentReviewSetId}）取代${tail}\n\n`;
+  return notice + body.replace(SUPERSEDE_BANNER_RE, '');
+}
+
+export function hasSupersedeBanner(body: string | null | undefined): boolean {
+  return SUPERSEDE_BANNER_RE.test(body ?? '');
+}
+
 async function supersedeOldReviewSets(
   octokit: Octokit,
   params: {
@@ -230,16 +253,24 @@ async function supersedeOldReviewSets(
     // 只取代发布身份自己上一轮留下的 Review。人类 reviewer 引用机器人正文时会把隐藏
     // 注释一起复制走，不加这层过滤就会把人家的 Review 给 dismiss 掉。
     if (!isAuthoredByPublisher(review, params.publisherLogin)) return false;
+    // 已经标过的历史轮次不必每轮重标一次 —— 原来第 N 轮要把前 N-1 轮的评论全
+    // 重写一遍，API 调用是 O(N²)。跳过它们之后总量降到 O(N)。
+    // 代价：更老的 Review 上的 review_set_id 指针会停在它当初被取代的那一轮。
+    // 横幅的作用是「这条已过期」，指针停在哪一轮不影响这个判断。
+    if (hasSupersedeBanner(review.body)) return false;
     const marker = decodeBatchMarker(review.body);
     return marker !== undefined && marker.reviewSetId !== params.currentReviewSetId;
   });
 
   if (staleReviews.length === 0) return;
 
-  const { data: allComments } = await octokit.rest.pulls.listReviewComments({
+  // 必须分页：GitHub 默认只返回 30 条。ios-source-learning#9 上实测有 62 条 inline
+  // 评论，第 31 条之后从来没被 supersede 处理过。同文件的 listFiles 就是这个写法。
+  const allComments = await octokit.paginate(octokit.rest.pulls.listReviewComments, {
     owner: params.owner,
     repo: params.repo,
     pull_number: params.prNumber,
+    per_page: 100,
   });
 
   for (const review of staleReviews) {
@@ -273,7 +304,11 @@ async function supersedeOldReviewSets(
         repo: params.repo,
         pull_number: params.prNumber,
         review_id: review.id,
-        body: notice + (review.body ?? ''),
+        body: applySupersedeNotice(
+          review.body ?? '',
+          params.currentReviewSetId,
+          '，请以下方最新 Review 为准。',
+        ),
       });
     }
 
@@ -283,7 +318,7 @@ async function supersedeOldReviewSets(
         owner: params.owner,
         repo: params.repo,
         comment_id: comment.id,
-        body: `⚠️ 已被新一轮审核（review_set_id=${params.currentReviewSetId}）取代。\n\n${comment.body ?? ''}`,
+        body: applySupersedeNotice(comment.body ?? '', params.currentReviewSetId),
       });
     }
   }

@@ -8,6 +8,8 @@ import {
   executePublish,
   resolveEngineRevision,
   readAnalyzeArtifactFromFile,
+  applySupersedeNotice,
+  hasSupersedeBanner,
 } from './publish.js';
 import { validate } from '../lib/schema-validator.js';
 import { encodeBatchMarker } from '../lib/hidden-marker.js';
@@ -189,7 +191,7 @@ const BOT_USER = { login: 'github-actions[bot]', type: 'Bot' };
 
 function makeMockOctokit(overrides: {
   listReviews?: Array<{ id: number; body: string | null; state?: string; user?: { login: string; type: string } }>;
-  listReviewComments?: Array<{ id: number; pull_request_review_id: number }>;
+  listReviewComments?: Array<{ id: number; pull_request_review_id: number; body?: string }>;
   files?: Array<{ filename: string; patch?: string }>;
 } = {}) {
   const files = overrides.files ?? [{ filename: 'src/foo.ts', patch: DEFAULT_PATCH }];
@@ -483,6 +485,75 @@ describe('executePublish', () => {
     );
   });
 
+  it('supersedes review comments beyond the default 30-item page', async () => {
+    // GitHub 的 listReviewComments 默认只返回 30 条。实测那次有 62 条 inline
+    // 评论，第 31 条之后从来没被处理过 —— 不分页的话「横幅不再堆叠」根本无从谈起。
+    const manyComments = Array.from({ length: 62 }, (_, i) => ({
+      id: 1000 + i,
+      pull_request_review_id: 777,
+      body: `第 ${i} 条正文`,
+    }));
+    const octokit = makeMockOctokit({
+      listReviews: [
+        {
+          id: 777,
+          state: 'COMMENTED',
+          body: encodeBatchMarker({ reviewSetId: 'old-set', batchIndex: 0, batchCount: 1, digest: 'abc' }),
+        },
+      ],
+      listReviewComments: manyComments,
+    });
+
+    await executePublish({
+      octokit: octokit as never,
+      owner: 'octo',
+      repo: 'repo',
+      prNumber: 42,
+      currentIdentityTuple: identityTuple,
+      expectedIdentityTuple: identityTuple,
+      findings: [makeFinding('cf-1')],
+      coverageManifest: makeCoverageManifest(),
+      anyRequiredStageFailed: false,
+      reviewBatchLimits,
+      ...engineCtx,
+    });
+
+    expect(octokit.rest.pulls.updateReviewComment).toHaveBeenCalledTimes(62);
+  });
+
+  it('does not re-supersede a review that already carries a banner', async () => {
+    // 第 N 轮不该把前 N-1 轮的评论全重写一遍（原来是 O(N^2) 次 API 调用）。
+    const octokit = makeMockOctokit({
+      listReviews: [
+        {
+          id: 777,
+          state: 'COMMENTED',
+          body:
+            '⚠️ 已被新一轮审核（review_set_id=da930601ee5709fe5117）取代，请以下方最新 Review 为准。\n\n' +
+            encodeBatchMarker({ reviewSetId: 'old-set', batchIndex: 0, batchCount: 1, digest: 'abc' }),
+        },
+      ],
+      listReviewComments: [{ id: 888, pull_request_review_id: 777, body: '正文' }],
+    });
+
+    await executePublish({
+      octokit: octokit as never,
+      owner: 'octo',
+      repo: 'repo',
+      prNumber: 42,
+      currentIdentityTuple: identityTuple,
+      expectedIdentityTuple: identityTuple,
+      findings: [makeFinding('cf-1')],
+      coverageManifest: makeCoverageManifest(),
+      anyRequiredStageFailed: false,
+      reviewBatchLimits,
+      ...engineCtx,
+    });
+
+    expect(octokit.rest.pulls.updateReview).not.toHaveBeenCalled();
+    expect(octokit.rest.pulls.updateReviewComment).not.toHaveBeenCalled();
+  });
+
   it('dismisses a stale CHANGES_REQUESTED review instead of editing its body', async () => {
     const octokit = makeMockOctokit({
       listReviews: [{ id: 777, state: 'CHANGES_REQUESTED', body: encodeBatchMarker({ reviewSetId: 'old-set', batchIndex: 0, batchCount: 1, digest: 'abc' }) }],
@@ -690,5 +761,62 @@ describe('readAnalyzeArtifactFromFile', () => {
   it('returns undefined when the path does not exist (analyze was skipped)', () => {
     const result = readAnalyzeArtifactFromFile('/nonexistent/path/analyze-artifact.json');
     expect(result).toBeUndefined();
+  });
+});
+
+/**
+ * supersede 横幅。原实现无条件把 notice 前缀拼到旧 body 上，于是第 N 轮会给前
+ * N-1 轮的每条评论再叠一行：ios-source-learning#9 跑到第 17 轮时，62 条 inline
+ * 评论上累计了 341 行横幅，单条最多 17 行。
+ *
+ * id 用真实形态（computeReviewSetId 生成的 20 位小写 hex），下面两个就是那次
+ * 实测里第 9 轮和第 17 轮的真实 review_set_id。
+ */
+describe('applySupersedeNotice', () => {
+  const OLD_ID = 'da930601ee5709fe5117';
+  const NEW_ID = '749175639961c1b2be8b';
+
+  it('replaces an existing banner instead of stacking a second one', () => {
+    const body = applySupersedeNotice(
+      `⚠️ 已被新一轮审核（review_set_id=${OLD_ID}）取代。\n\n正文`,
+      NEW_ID,
+    );
+
+    expect(body).toBe(`⚠️ 已被新一轮审核（review_set_id=${NEW_ID}）取代。\n\n正文`);
+    expect(body.match(/已被新一轮审核/g)).toHaveLength(1);
+  });
+
+  it('strips a whole stack of banners at once', () => {
+    const stacked =
+      `⚠️ 已被新一轮审核（review_set_id=${OLD_ID}）取代。\n\n`.repeat(17) + '正文';
+
+    const body = applySupersedeNotice(stacked, NEW_ID);
+
+    expect(body.match(/已被新一轮审核/g)).toHaveLength(1);
+    expect(body.endsWith('正文')).toBe(true);
+  });
+
+  it('also strips the review-body variant that carries the trailing pointer', () => {
+    const body = applySupersedeNotice(
+      `⚠️ 已被新一轮审核（review_set_id=${OLD_ID}）取代，请以下方最新 Review 为准。\n\n正文`,
+      NEW_ID,
+      '，请以下方最新 Review 为准。',
+    );
+
+    expect(body.match(/已被新一轮审核/g)).toHaveLength(1);
+    expect(body.endsWith('正文')).toBe(true);
+  });
+
+  it('leaves a body without a banner intact apart from the new prefix', () => {
+    expect(applySupersedeNotice('正文', NEW_ID)).toBe(
+      `⚠️ 已被新一轮审核（review_set_id=${NEW_ID}）取代。\n\n正文`,
+    );
+  });
+
+  it('hasSupersedeBanner only matches a leading banner, not a mention in the body', () => {
+    expect(hasSupersedeBanner(`⚠️ 已被新一轮审核（review_set_id=${OLD_ID}）取代。\n\n正文`)).toBe(true);
+    expect(hasSupersedeBanner('正文里提到了「已被新一轮审核」这几个字')).toBe(false);
+    expect(hasSupersedeBanner(null)).toBe(false);
+    expect(hasSupersedeBanner(undefined)).toBe(false);
   });
 });

@@ -173,6 +173,29 @@ describe('runExpert', () => {
     await expect(runExpert({ ...baseInput, client })).rejects.toThrow(/schema validation/);
   });
 
+  // 与 2026-08-28 ios-source-learning#9 第 6 轮、第 12 轮线上观测一致：模型交回
+  // 的 candidate_findings 除 source_agent 外字段齐备，整轮因此判 incomplete。
+  it('fills a missing source_agent from agentName instead of failing validation', async () => {
+    const output = makeValidExpertOutput(1, true);
+    delete (output.candidate_findings[0] as Record<string, unknown>).source_agent;
+    const client = { sendStructuredRequest: vi.fn().mockResolvedValue(output) };
+
+    const result = await runExpert({ ...baseInput, client });
+
+    expect(result.output.candidate_findings[0]?.source_agent).toBe('generic-correctness');
+  });
+
+  it('keeps a source_agent the model did provide', async () => {
+    const output = makeValidExpertOutput(1, true);
+    output.candidate_findings[0]!.source_agent = 'generic-security';
+    const client = { sendStructuredRequest: vi.fn().mockResolvedValue(output) };
+
+    const result = await runExpert({ ...baseInput, client });
+
+    // 「模型把 finding 归给了别的 agent」必须仍然可被观察到
+    expect(result.output.candidate_findings[0]?.source_agent).toBe('generic-security');
+  });
+
   it('does not retry a network/transport error — only schema-validation failures are retried here', async () => {
     const client = {
       sendStructuredRequest: vi.fn().mockRejectedValue(new Error('network boom')),

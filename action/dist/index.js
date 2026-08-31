@@ -37314,6 +37314,22 @@ function coerceStringifiedBoolean(raw) {
     return { ...obj, coverage_complete: false };
   return raw;
 }
+function fillMissingSourceAgent(raw, agentName) {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw))
+    return raw;
+  const obj = raw;
+  if (!Array.isArray(obj.candidate_findings))
+    return raw;
+  return {
+    ...obj,
+    candidate_findings: obj.candidate_findings.map((finding) => {
+      if (finding === null || typeof finding !== "object" || Array.isArray(finding))
+        return finding;
+      const entry = finding;
+      return entry.source_agent === void 0 ? { ...entry, source_agent: agentName } : entry;
+    })
+  };
+}
 async function requestAndValidate(input, systemPrompt, userPrompt) {
   const rawResponse = await input.client.sendStructuredRequest({
     model: input.model,
@@ -37321,7 +37337,7 @@ async function requestAndValidate(input, systemPrompt, userPrompt) {
     userPrompt,
     jsonSchema: expertOutputSchemaForModel
   });
-  const raw = coerceStringifiedBoolean(rawResponse);
+  const raw = fillMissingSourceAgent(coerceStringifiedBoolean(rawResponse), input.agentName);
   const result = validate(
     "https://pr-review-swarm/schemas/expert-output.schema.json",
     raw

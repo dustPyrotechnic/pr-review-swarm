@@ -136,6 +136,28 @@ function coerceStringifiedBoolean(raw: unknown): unknown {
   return raw;
 }
 
+// `source_agent` 的正确值永远是调用方自己传进来的 agentName —— 让模型回填一个
+// 我们已经知道的常量，等于凭空造出一个失败面。2026-08-28 的 ios-source-learning#9
+// 上，17 轮里有 2 轮就是因为模型漏填这个字段而整轮判 incomplete。
+//
+// 与 coerceStringifiedBoolean 同一性质：只补 runner 自己的元数据，绝不触碰任何
+// 证据字段（path/line/evidence/…），所以不削弱证据完整性边界。只在缺失时补，
+// 模型填了值就原样保留，这样「模型把 finding 归给了别的 agent」仍然可被观察到。
+function fillMissingSourceAgent(raw: unknown, agentName: string): unknown {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const obj = raw as Record<string, unknown>;
+  if (!Array.isArray(obj.candidate_findings)) return raw;
+
+  return {
+    ...obj,
+    candidate_findings: obj.candidate_findings.map((finding) => {
+      if (finding === null || typeof finding !== 'object' || Array.isArray(finding)) return finding;
+      const entry = finding as Record<string, unknown>;
+      return entry.source_agent === undefined ? { ...entry, source_agent: agentName } : entry;
+    }),
+  };
+}
+
 async function requestAndValidate(
   input: RunExpertInput,
   systemPrompt: string,
@@ -147,7 +169,7 @@ async function requestAndValidate(
     userPrompt,
     jsonSchema: expertOutputSchemaForModel,
   });
-  const raw = coerceStringifiedBoolean(rawResponse);
+  const raw = fillMissingSourceAgent(coerceStringifiedBoolean(rawResponse), input.agentName);
 
   const result = validate<ExpertOutput>(
     'https://pr-review-swarm/schemas/expert-output.schema.json',

@@ -239,8 +239,11 @@ describe('run-evaluation.mjs 脚本本身', () => {
             category: 'correctness',
             title: '只在第二轮冒出来的误报',
             evidence: '注释改动被当成了行为变更',
-            impact: '无',
-            suggestion: '无',
+            // impact / suggestion 刻意写成真内容：arbiter 的 self-refutation-gate
+            // 会丢掉 suggestion 为「无」的候选（那是 2026-08-30 加的确定性门禁），
+            // 用「无」当占位符会让这条误报根本到不了输出，测试就变成假绿。
+            impact: '把注释改动误报成行为变更，评审要多花时间确认',
+            suggestion: '判定行为变更前先排除纯注释行',
             introduced_by_pr: true,
             source_agent: 'generic-correctness',
           },

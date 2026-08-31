@@ -1,4 +1,4 @@
-import { readdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -82,6 +82,7 @@ const LIMITS = {
   maxVerifierCallsPerRun: 30,
   maxFinalFindingsPerRun: 30,
   maxExpertSchemaRetries: 1,
+  maxVerifierSchemaRetries: 1,
 };
 
 describe('评测链路端到端（fake LLM）', () => {
@@ -197,4 +198,28 @@ describe('评测链路端到端（fake LLM）', () => {
     // 管线自身若引入了不确定性（比如 id 里掺了时间戳），这里就会红。
     expect(findingSetInstability(runs)).toBe(0);
   }, 120_000);
+});
+
+/**
+ * limits 是评测脚本自己拼的对象，而 run-evaluation.mjs 是 .mjs —— 没有类型检查。
+ * 往 AnalyzeLimits 加了新键却忘了在这里也加，后果不是报错，是那个开关在整个
+ * 评测里静默失效（读到 undefined 走默认值）。2026-08-30 加
+ * maxVerifierSchemaRetries 时就正好踩了这一脚。
+ *
+ * 所以直接拿 run-evaluation.mjs 的源码对账 central-limits.json：凡是名字里带
+ * Retries / PerRun / PerAgentPerShard 的键，都必须在评测脚本里被引用到。
+ */
+describe('评测脚本的 limits 不能漏键', () => {
+  it('run-evaluation.mjs 传齐了 analyze.ts 会从 centralLimits 读的每一个键', () => {
+    const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+    // 真源头：analyze.ts 里所有 centralLimits.<key> 的引用。
+    const analyzeSource = readFileSync(join(root, 'action', 'src', 'entrypoints', 'analyze.ts'), 'utf-8');
+    const needed = [...analyzeSource.matchAll(/centralLimits\.(\w+)/g)].map((m) => m[1]);
+    expect(new Set(needed).size).toBeGreaterThan(0);
+
+    const evalSource = readFileSync(join(root, 'benchmarks', 'run-evaluation.mjs'), 'utf-8');
+    const missing = [...new Set(needed)].filter((key) => !evalSource.includes(key));
+
+    expect(missing, `run-evaluation.mjs 漏了这些 limits 键：${missing.join(', ')}`).toEqual([]);
+  });
 });

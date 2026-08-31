@@ -106,6 +106,7 @@ async function main() {
     maxVerifierCallsPerRun: pipeline.centralLimits.maxVerifierCallsPerRun,
     maxFinalFindingsPerRun: pipeline.centralLimits.maxFinalFindingsPerRun,
     maxExpertSchemaRetries: pipeline.centralLimits.maxExpertSchemaRetries,
+    maxVerifierSchemaRetries: pipeline.centralLimits.maxVerifierSchemaRetries,
   };
 
   console.log('=== PR Review Swarm Benchmark ===');

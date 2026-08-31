@@ -34629,6 +34629,7 @@ var init_central_limits = __esm({
       maxFindingsPerReviewBatch: 20,
       maxReviewBodyChars: 6e4,
       maxExpertSchemaRetries: 1,
+      maxVerifierSchemaRetries: 1,
       maxArtifactBytes: 64e6
     };
   }
@@ -37435,7 +37436,7 @@ var init_deterministic_evidence_validator = __esm({
 });
 
 // src/lib/verifier-client.ts
-async function verifyFinding(input) {
+async function requestAndValidate2(input) {
   let raw;
   try {
     raw = await input.client.sendStructuredRequest({
@@ -37451,7 +37452,8 @@ ${input.contextContent}`
     });
   } catch (err) {
     throw new VerifierUnavailableError(
-      `verifier-client: verifier call failed: ${err instanceof Error ? err.message : String(err)}`
+      `verifier-client: verifier call failed: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err }
     );
   }
   const result = validate(
@@ -37459,7 +37461,7 @@ ${input.contextContent}`
     raw
   );
   if (!result.valid) {
-    throw new VerifierUnavailableError(
+    throw new VerifierSchemaError(
       `verifier-client: verifier response failed schema validation: ${result.errors.join("; ")}`
     );
   }
@@ -37474,14 +37476,27 @@ ${input.contextContent}`
   }
   return result.data;
 }
-var VerifierUnavailableError, VERIFIER_SYSTEM_PROMPT;
+async function verifyFinding(input) {
+  return withRetry(() => requestAndValidate2(input), {
+    maxRetries: input.maxSchemaRetries ?? 0,
+    ...input.retrySleep ? { sleep: input.retrySleep } : {},
+    // 只重试真正随机的两类。默认的 isRetryable 会把「没有 status 字段的异常」
+    // 一律当成可重试，那会把 401 和空响应体也算进去 —— 明确覆盖掉。
+    isRetryable: (err) => err instanceof VerifierSchemaError || err?.cause instanceof DeepSeekMalformedResultError
+  });
+}
+var VerifierUnavailableError, VerifierSchemaError, VERIFIER_SYSTEM_PROMPT;
 var init_verifier_client = __esm({
   "src/lib/verifier-client.ts"() {
     "use strict";
     init_verifier_conclusion_schema();
     init_schema_validator();
     init_data_boundary();
+    init_retry();
+    init_deepseek_client();
     VerifierUnavailableError = class extends Error {
+    };
+    VerifierSchemaError = class extends VerifierUnavailableError {
     };
     VERIFIER_SYSTEM_PROMPT = `You are an independent verifier reviewing a single candidate finding raised by another reviewer. Actively look for counterexamples, missing preconditions, and existing safeguards that would make this finding invalid. If the finding claims a cross-file causal link (cross_file_causal_claim), you must locate a real call site or reference in the given context that supports the claim in evidence_refs \u2014 do not accept the claim on the reviewer's word alone. Respond with status "confirmed" only if the finding holds up after this scrutiny; otherwise respond "rejected".`;
   }
@@ -37884,7 +37899,8 @@ async function runAnalysis(input) {
         finding,
         contextContent: contextContentByPath.get(finding.path) ?? "",
         model: input.model,
-        client: input.client
+        client: input.client,
+        maxSchemaRetries: input.limits.maxVerifierSchemaRetries
       });
       verifiedCandidates.push({
         finding,
@@ -37939,7 +37955,8 @@ async function run4() {
       maxSkillRequestsPerRun: central_limits_default.maxSkillRequestsPerRun,
       maxVerifierCallsPerRun: central_limits_default.maxVerifierCallsPerRun,
       maxFinalFindingsPerRun: central_limits_default.maxFinalFindingsPerRun,
-      maxExpertSchemaRetries: central_limits_default.maxExpertSchemaRetries
+      maxExpertSchemaRetries: central_limits_default.maxExpertSchemaRetries,
+      maxVerifierSchemaRetries: central_limits_default.maxVerifierSchemaRetries
     }
   });
   if (result.stageFailureReason) {

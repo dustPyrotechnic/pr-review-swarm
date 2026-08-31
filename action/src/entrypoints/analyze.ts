@@ -56,6 +56,9 @@ export interface AnalyzeLimits {
   // (empirically a stochastic model-formatting glitch, not a deterministic
   // prompt defect — see expert-runner.ts's ExpertOutputSchemaError).
   maxExpertSchemaRetries: number;
+  // 同上，但针对 verifier 侧（verifier-client.ts 的 VerifierSchemaError）。
+  // verifier 一直没有重试，一次抖动就把整轮判成 incomplete。
+  maxVerifierSchemaRetries: number;
 }
 
 export interface AnalyzeCoreInput {
@@ -301,6 +304,7 @@ export async function runAnalysis(input: AnalyzeCoreInput): Promise<AnalyzeCoreR
         contextContent: contextContentByPath.get(finding.path) ?? '',
         model: input.model,
         client: input.client,
+        maxSchemaRetries: input.limits.maxVerifierSchemaRetries,
       });
       verifiedCandidates.push({
         finding,
@@ -375,6 +379,7 @@ export async function run(): Promise<void> {
       maxVerifierCallsPerRun: centralLimits.maxVerifierCallsPerRun,
       maxFinalFindingsPerRun: centralLimits.maxFinalFindingsPerRun,
       maxExpertSchemaRetries: centralLimits.maxExpertSchemaRetries,
+      maxVerifierSchemaRetries: centralLimits.maxVerifierSchemaRetries,
     },
   });
 

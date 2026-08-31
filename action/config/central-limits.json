@@ -15,5 +15,6 @@
   "maxFindingsPerReviewBatch": 20,
   "maxReviewBodyChars": 60000,
   "maxExpertSchemaRetries": 1,
+  "maxVerifierSchemaRetries": 1,
   "maxArtifactBytes": 64000000
 }

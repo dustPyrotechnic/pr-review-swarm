@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { verifyFinding, VerifierUnavailableError } from './verifier-client.js';
+import { verifyFinding, VerifierUnavailableError, VerifierSchemaError } from './verifier-client.js';
+import { DeepSeekMalformedResultError, DeepSeekResponseError } from './deepseek-client.js';
 import type { CandidateFinding } from './expert-runner.js';
 
 function makeFinding(overrides: Partial<CandidateFinding> = {}): CandidateFinding {
@@ -85,5 +86,107 @@ describe('verifyFinding', () => {
     await expect(verifyFinding({ ...baseArgs, finding: makeFinding(), client })).rejects.toBeInstanceOf(
       VerifierUnavailableError,
     );
+  });
+});
+
+/**
+ * 重试策略。expert-runner 早就有 withRetry 兜底同一类失败，verifier 侧一直没有
+ * —— 一次抖动就把整轮判成 incomplete。2026-08-29 的 ios-source-learning#9 第 17
+ * 轮正是如此：verifier 少了个 status 字段，整轮报废。
+ *
+ * 但不能无差别重试：verifyFinding 把客户端的**任何**异常都包成
+ * VerifierUnavailableError，其中 401、空响应体、缺 tool_calls 都是确定性失败，
+ * 重试 200 × 2 次只烧配额。只有 schema 抖动和畸形 tool-call 值得重试。
+ */
+describe('verifyFinding retries', () => {
+  const retrySleep = () => Promise.resolve();
+
+  it('retries a schema-invalid response and succeeds on the second attempt', async () => {
+    const client = {
+      sendStructuredRequest: vi
+        .fn()
+        // 与第 17 轮线上观测一致：缺 status
+        .mockResolvedValueOnce({ notes: 'looks fine' })
+        .mockResolvedValueOnce({ status: 'rejected' }),
+    };
+
+    const result = await verifyFinding({
+      ...baseArgs,
+      finding: makeFinding(),
+      client,
+      maxSchemaRetries: 1,
+      retrySleep,
+    });
+
+    expect(result.status).toBe('rejected');
+    expect(client.sendStructuredRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a malformed tool-call payload', async () => {
+    const client = {
+      sendStructuredRequest: vi
+        .fn()
+        .mockRejectedValueOnce(
+          new DeepSeekMalformedResultError('deepseek-client: tool call arguments are not valid JSON'),
+        )
+        .mockResolvedValueOnce({ status: 'confirmed' }),
+    };
+
+    const result = await verifyFinding({
+      ...baseArgs,
+      finding: makeFinding(),
+      client,
+      maxSchemaRetries: 1,
+      retrySleep,
+    });
+
+    expect(result.status).toBe('confirmed');
+    expect(client.sendStructuredRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('does NOT retry a deterministic client failure — retrying a 401 only burns quota', async () => {
+    const client = {
+      sendStructuredRequest: vi
+        .fn()
+        .mockRejectedValue(new DeepSeekResponseError('deepseek-client: request failed with status 401')),
+    };
+
+    await expect(
+      verifyFinding({ ...baseArgs, finding: makeFinding(), client, maxSchemaRetries: 3, retrySleep }),
+    ).rejects.toBeInstanceOf(VerifierUnavailableError);
+    expect(client.sendStructuredRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT retry a missing-tool_calls response', async () => {
+    const client = {
+      sendStructuredRequest: vi
+        .fn()
+        .mockRejectedValue(
+          new DeepSeekResponseError('deepseek-client: response missing choices[0].message.tool_calls'),
+        ),
+    };
+
+    await expect(
+      verifyFinding({ ...baseArgs, finding: makeFinding(), client, maxSchemaRetries: 3, retrySleep }),
+    ).rejects.toBeInstanceOf(VerifierUnavailableError);
+    expect(client.sendStructuredRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('still throws once schema retries are exhausted', async () => {
+    const client = { sendStructuredRequest: vi.fn().mockResolvedValue({ notes: 'no status' }) };
+
+    await expect(
+      verifyFinding({ ...baseArgs, finding: makeFinding(), client, maxSchemaRetries: 1, retrySleep }),
+    ).rejects.toBeInstanceOf(VerifierSchemaError);
+    expect(client.sendStructuredRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry at all by default (maxSchemaRetries defaults to 0)', async () => {
+    const client = { sendStructuredRequest: vi.fn().mockResolvedValue({ notes: 'no status' }) };
+
+    await expect(
+      verifyFinding({ ...baseArgs, finding: makeFinding(), client }),
+    ).rejects.toBeInstanceOf(VerifierUnavailableError);
+    expect(client.sendStructuredRequest).toHaveBeenCalledTimes(1);
   });
 });

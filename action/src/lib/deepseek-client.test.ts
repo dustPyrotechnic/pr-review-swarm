@@ -135,3 +135,15 @@ describe('createDeepSeekClient / sendStructuredRequest', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('sampling parameters', () => {
+  it('sends temperature 0 for structured extraction', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(200, successBody({ ok: true })));
+    const client = createDeepSeekClient({ apiKey: 'k', fetchImpl });
+
+    await client.sendStructuredRequest(baseInput);
+
+    const body = JSON.parse((fetchImpl.mock.calls[0]![1] as { body: string }).body);
+    expect(body.temperature).toBe(0);
+  });
+});

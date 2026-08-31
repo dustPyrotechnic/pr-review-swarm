@@ -37046,6 +37046,7 @@ function createDeepSeekClient(options) {
           },
           body: JSON.stringify({
             model: input.model,
+            temperature: STRUCTURED_EXTRACTION_TEMPERATURE,
             messages: [
               { role: "system", content: input.systemPrompt },
               { role: "user", content: input.userPrompt }
@@ -37145,11 +37146,12 @@ function createDeepSeekClient(options) {
   }
   return { sendStructuredRequest: sendStructuredRequestSafely };
 }
-var SUBMIT_RESULT_FUNCTION_NAME, DeepSeekTransientError, DeepSeekResponseError, DeepSeekMalformedResultError, NonFiniteNumberError, MAX_RETRY_AFTER_MS;
+var SUBMIT_RESULT_FUNCTION_NAME, STRUCTURED_EXTRACTION_TEMPERATURE, DeepSeekTransientError, DeepSeekResponseError, DeepSeekMalformedResultError, NonFiniteNumberError, MAX_RETRY_AFTER_MS;
 var init_deepseek_client = __esm({
   "src/lib/deepseek-client.ts"() {
     "use strict";
     SUBMIT_RESULT_FUNCTION_NAME = "submit_result";
+    STRUCTURED_EXTRACTION_TEMPERATURE = 0;
     DeepSeekTransientError = class extends Error {
     };
     DeepSeekResponseError = class extends Error {

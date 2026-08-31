@@ -5,6 +5,23 @@
 // `parameters` schema.
 const SUBMIT_RESULT_FUNCTION_NAME = 'submit_result';
 
+/**
+ * 不设 temperature 就是走 DeepSeek 的默认值（deepseek-chat 为 1.0）。对于
+ * 「从 diff 里抽取缺陷并填进固定 schema」这种任务，默认温度带来的只有方差。
+ *
+ * 实测依据：ios-source-learning#9 的第 17、18 轮跑的是同一个 head_sha
+ * 9d434a41、同一份 diff，一轮 4 条 finding、另一轮 3 条，**交集为 0**，
+ * 且完整性判定还不一样。评测集上的召回率完全没有覆盖这种 run-to-run 方差。
+ *
+ * 注意这不等于逐 token 确定：MoE + 批处理下 t=0 仍可能有微小漂移，top_p 也没动。
+ * 承诺只到「降低方差」，实际降幅由 benchmarks 的 findingSetInstability 量化。
+ *
+ * 副作用：expert-runner / verifier-client 的 schema 重试，正当性建立在「同样的
+ * 请求下一次通常就好了」上，温度降到 0 后这个前提被削弱。所以那两个重试次数
+ * 本轮都保持不动，等评测数据出来再决定。
+ */
+const STRUCTURED_EXTRACTION_TEMPERATURE = 0;
+
 export class DeepSeekTransientError extends Error {}
 export class DeepSeekResponseError extends Error {}
 
@@ -146,6 +163,7 @@ export function createDeepSeekClient(options: DeepSeekClientOptions): DeepSeekCl
           },
           body: JSON.stringify({
             model: input.model,
+            temperature: STRUCTURED_EXTRACTION_TEMPERATURE,
             messages: [
               { role: 'system', content: input.systemPrompt },
               { role: 'user', content: input.userPrompt },

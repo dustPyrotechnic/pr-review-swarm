@@ -17,7 +17,11 @@ ${refNote(ref)}
 name: PR Review Swarm
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review, edited, converted_to_draft, closed]
+    # 不含 closed：PR 合并后再跑一轮，只会留下一条没人会处理的 REQUEST_CHANGES
+    # 和一个红叉（实测 ios-source-learning#9 第 18 轮就是这么来的）。
+    # 不含 edited：改标题或正文不影响 diff，却会触发一整轮完整审核。
+    # action 侧 status-start 还有第二道短路，这里是第一道。
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_dispatch:
     inputs:
       pr_number:

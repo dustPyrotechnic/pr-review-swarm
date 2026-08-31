@@ -1,6 +1,6 @@
 import * as core from '@actions/core';
 import { context, getOctokit } from '@actions/github';
-import { fetchIdentityTuple, type IdentityTuple } from '../lib/identity-tuple.js';
+import { fetchIdentityTupleWithState, type IdentityTuple } from '../lib/identity-tuple.js';
 import { loadRepoConfig } from '../lib/repo-config.js';
 import { evaluateTrustGate } from '../lib/trust-gate.js';
 import { getOctokitFromInput } from '../lib/github-client.js';
@@ -37,7 +37,12 @@ export async function evaluateAndStartStatus(
   octokit: Octokit,
   input: StatusStartInput,
 ): Promise<StatusStartResult> {
-  const identityTuple = await fetchIdentityTuple(octokit, input.owner, input.repo, input.prNumber);
+  const { identityTuple, pullRequestState } = await fetchIdentityTupleWithState(
+    octokit,
+    input.owner,
+    input.repo,
+    input.prNumber,
+  );
 
   const externalId = encodeExternalId({
     owner: input.owner,
@@ -70,6 +75,29 @@ export async function evaluateAndStartStatus(
       repo: input.repo,
       checkRunId,
       conclusion: 'action_required',
+    });
+    return { gatePassed: false, identityTuple, checkRunId };
+  }
+
+  // 已合并 / 已关闭的 PR 上再发 Review 没有任何意义，只会留下一条永远不会被处理
+  // 的 REQUEST_CHANGES 和一个红叉。2026-08-30 的 ios-source-learning#9：00:45:10
+  // 合并，00:45:14 被 closed 事件触发，00:47:13 在已合并 PR 上提交了第 18 轮
+  // CHANGES_REQUESTED。
+  //
+  // 防线放在 action 里而不是只放在部署模板里：模板落地后就是使用方自己的文件，
+  // 我们改不动已经发出去的那些。
+  //
+  // 结论刻意用 neutral 而不是 rejectWithActionRequired 的 action_required ——
+  // 「PR 已合并」不需要任何人做任何事，不该显示成红叉。
+  if (pullRequestState.state === 'closed') {
+    core.info(
+      `status-start: skipping ${pullRequestState.merged ? 'merged' : 'closed'} PR #${input.prNumber}`,
+    );
+    await patchCheckConclusion(octokit, {
+      owner: input.owner,
+      repo: input.repo,
+      checkRunId,
+      conclusion: 'neutral',
     });
     return { gatePassed: false, identityTuple, checkRunId };
   }

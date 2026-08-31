@@ -11,12 +11,37 @@ export interface IdentityTuple {
   mergeBaseSha: string;
 }
 
+/**
+ * PR 的开闭状态。刻意与 IdentityTuple 并列而不是并入它 —— IdentityTuple 会进
+ * verdict artifact，形状受 schemas/verdict.schema.json 约束，往里加字段会破坏校验。
+ *
+ * 数据来自 fetchIdentityTuple 已经发出的那次 pulls.get，不额外打 API。
+ */
+export interface PullRequestState {
+  state: 'open' | 'closed';
+  merged: boolean;
+}
+
+export interface FetchIdentityTupleResult {
+  identityTuple: IdentityTuple;
+  pullRequestState: PullRequestState;
+}
+
 export async function fetchIdentityTuple(
   octokit: Octokit,
   owner: string,
   repo: string,
   prNumber: number,
 ): Promise<IdentityTuple> {
+  return (await fetchIdentityTupleWithState(octokit, owner, repo, prNumber)).identityTuple;
+}
+
+export async function fetchIdentityTupleWithState(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<FetchIdentityTupleResult> {
   const { data: pr } = await octokit.rest.pulls.get({
     owner,
     repo,
@@ -37,12 +62,18 @@ export async function fetchIdentityTuple(
   });
 
   return {
-    headRepo,
-    headSha,
-    baseRepo,
-    baseRef,
-    baseSha,
-    mergeBaseSha: comparison.merge_base_commit.sha,
+    identityTuple: {
+      headRepo,
+      headSha,
+      baseRepo,
+      baseRef,
+      baseSha,
+      mergeBaseSha: comparison.merge_base_commit.sha,
+    },
+    pullRequestState: {
+      state: pr.state === 'closed' ? 'closed' : 'open',
+      merged: pr.merged === true,
+    },
   };
 }
 

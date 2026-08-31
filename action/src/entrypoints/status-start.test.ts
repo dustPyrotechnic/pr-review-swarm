@@ -19,6 +19,8 @@ function makeMockOctokit(options: {
   authorAssociation?: string;
   collaboratorPermission?: string;
   staleCheckRuns?: Array<{ id: number; status: string; runId: string }>;
+  pullState?: 'open' | 'closed';
+  merged?: boolean;
 }) {
   const staleCheckRuns = options.staleCheckRuns ?? [];
 
@@ -29,6 +31,9 @@ function makeMockOctokit(options: {
           data: {
             head: { repo: { full_name: 'octo/head-repo' }, sha: 'headsha123' },
             base: { repo: { full_name: 'octo/repo' }, ref: 'main', sha: 'basesha456' },
+            // 真实 pulls.get 一定带这两个字段；status-start 用它们短路已关闭的 PR。
+            state: options.pullState ?? 'open',
+            merged: options.merged ?? false,
           },
         }),
       },
@@ -214,5 +219,82 @@ describe('evaluateAndStartStatus', () => {
     expect(octokit.rest.checks.update).not.toHaveBeenCalledWith(
       expect.objectContaining({ check_run_id: 333 }),
     );
+  });
+
+  /**
+   * 已合并 / 已关闭的 PR 上再发 Review 只会留下一条没人处理的 REQUEST_CHANGES。
+   * 2026-08-30 的 ios-source-learning#9：00:45:10 合并，00:45:14 被 closed 事件
+   * 触发，00:47:13 在已合并 PR 上提交了第 18 轮 CHANGES_REQUESTED。
+   */
+  it('skips the review entirely when the PR is already merged', async () => {
+    const octokit = makeMockOctokit({
+      repoConfigYaml: 'enabled: true\n',
+      pullState: 'closed',
+      merged: true,
+    });
+
+    const result = await evaluateAndStartStatus(octokit as never, {
+      ...baseDeps,
+      eventName: 'pull_request_target',
+      authorAssociation: 'OWNER',
+      senderLogin: 'octocat',
+    });
+
+    expect(result.gatePassed).toBe(false);
+    // 已合并不是「需要人处理」—— 结论必须是 neutral，不能是红叉 action_required
+    expect(octokit.rest.checks.update).toHaveBeenCalledWith(
+      expect.objectContaining({ check_run_id: 111, conclusion: 'neutral' }),
+    );
+  });
+
+  it('skips a closed-but-unmerged PR the same way', async () => {
+    const octokit = makeMockOctokit({
+      repoConfigYaml: 'enabled: true\n',
+      pullState: 'closed',
+      merged: false,
+    });
+
+    const result = await evaluateAndStartStatus(octokit as never, {
+      ...baseDeps,
+      eventName: 'pull_request_target',
+      authorAssociation: 'OWNER',
+      senderLogin: 'octocat',
+    });
+
+    expect(result.gatePassed).toBe(false);
+    expect(octokit.rest.checks.update).toHaveBeenCalledWith(
+      expect.objectContaining({ conclusion: 'neutral' }),
+    );
+  });
+
+  it('short-circuits before even reading repo config on a closed PR', async () => {
+    // 省掉一次 getContent —— 已关闭就没必要再判断配置和信任门
+    const octokit = makeMockOctokit({
+      repoConfigYaml: 'enabled: true\n',
+      pullState: 'closed',
+      merged: true,
+    });
+
+    await evaluateAndStartStatus(octokit as never, {
+      ...baseDeps,
+      eventName: 'pull_request_target',
+      authorAssociation: 'OWNER',
+      senderLogin: 'octocat',
+    });
+
+    expect(octokit.rest.repos.getContent).not.toHaveBeenCalled();
+  });
+
+  it('still reviews an open PR', async () => {
+    const octokit = makeMockOctokit({ repoConfigYaml: 'enabled: true\n', pullState: 'open' });
+
+    const result = await evaluateAndStartStatus(octokit as never, {
+      ...baseDeps,
+      eventName: 'pull_request_target',
+      authorAssociation: 'OWNER',
+      senderLogin: 'octocat',
+    });
+
+    expect(result.gatePassed).toBe(true);
   });
 });

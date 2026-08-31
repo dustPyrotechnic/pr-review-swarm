@@ -79,6 +79,10 @@ export type CheckConclusion =
   | 'success'
   | 'failure'
   | 'action_required'
+  // 「这次不需要跑，也不需要任何人做什么」—— 目前只用于已关闭 / 已合并的 PR。
+  // 它和 action_required 的区别是显示成灰色而不是红叉：一个已经合并的 PR 上挂
+  // 红叉纯属误导。
+  | 'neutral'
   | 'cancelled'
   | 'timed_out';
 

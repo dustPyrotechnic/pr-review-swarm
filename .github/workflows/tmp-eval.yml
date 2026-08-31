@@ -1,0 +1,80 @@
+# 临时评测 workflow —— 用完即删。
+#
+# 目的：把 2026-08-30 审阅质量加固的评测跑在 CI 上（DeepSeek key 只在仓库
+# Secret 里，本地没有）。分两步：
+#   1. 方差对照：同一份用例连跑 3 次，比 `eval/baseline-t1`（只回退了
+#      temperature=0 那一行）与本分支的 findingSetInstability。
+#   2. 全量 27×3 --gate。只在加固分支上跑，基线分支不跑（省钱，也没意义）。
+#
+# 触发条件刻意只认 eval/** 分支：不碰 master，不影响 nightly，也不会被
+# pull_request 事件带起来。
+name: tmp-eval
+
+on:
+  push:
+    branches:
+      - 'eval/**'
+
+# 评测只读 checkout 的代码、只调 DeepSeek，不碰任何 GitHub API。
+permissions:
+  contents: read
+
+jobs:
+  variance:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: action/package-lock.json
+      - name: Install action deps
+        run: npm ci
+        working-directory: action
+      - name: Install benchmark deps
+        run: npm ci
+        working-directory: benchmarks
+      - name: Benchmark harness unit tests
+        run: npm test
+        working-directory: benchmarks
+      # 两个用例各跑 3 轮。选真阳性用例，findings 非空才谈得上「集合抖动」。
+      - name: Variance — go-goroutine-leak
+        working-directory: benchmarks
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: node run-evaluation.mjs --case=go-goroutine-leak --repeat=3
+      - name: Variance — hardcoded-credential
+        working-directory: benchmarks
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: node run-evaluation.mjs --case=hardcoded-credential --repeat=3
+
+  full-gate:
+    # 基线分支不跑全量：它只是温度对照，跑全量纯属烧钱。
+    if: github.ref != 'refs/heads/eval/baseline-t1'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: action/package-lock.json
+      - name: Install action deps
+        run: npm ci
+        working-directory: action
+      - name: Install benchmark deps
+        run: npm ci
+        working-directory: benchmarks
+      - name: Regression evaluation (gated)
+        working-directory: benchmarks
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: node run-evaluation.mjs --gate --repeat=3

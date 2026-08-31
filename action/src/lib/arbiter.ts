@@ -1,6 +1,7 @@
 import type { CandidateFinding } from './expert-runner.js';
 import type { DeterministicValidationStatus } from './deterministic-evidence-validator.js';
 import type { VerifierConclusion } from './verifier-client.js';
+import { isSelfRefuting } from './self-refutation-gate.js';
 
 export interface Finding extends CandidateFinding {
   evidence_validation: { status: 'passed'; notes?: string };
@@ -22,6 +23,7 @@ export type InternalDiagnosticOutcome =
   | 'confirmed'
   | 'merged_into'
   | 'rejected_deterministic'
+  | 'rejected_self_refuted'
   | 'rejected_verifier';
 
 export interface InternalDiagnosticEntry {
@@ -64,6 +66,20 @@ export function arbitrate(candidates: VerifiedCandidate[]): ArbiterResult {
   const confirmedCandidates: VerifiedCandidate[] = [];
 
   for (const candidate of candidates) {
+    // 排在 deterministic / verifier 两道之前：一条自己论证了「不构成缺陷」的
+    // finding，无论锚点多合法、verifier 多确信，都不该发出去。verifier 拦不住它
+    // ——「描述属实」和「要求对方改」是两回事，而 verifier 被问的是前者。
+    if (isSelfRefuting(candidate.finding)) {
+      internalDiagnostics.push({
+        id: candidate.finding.id,
+        path: candidate.finding.path,
+        line: candidate.finding.line,
+        outcome: 'rejected_self_refuted',
+        reason: 'finding text concludes there is no defect / suggestion is a no-op',
+      });
+      continue;
+    }
+
     if (candidate.deterministicStatus === 'failed') {
       internalDiagnostics.push({
         id: candidate.finding.id,

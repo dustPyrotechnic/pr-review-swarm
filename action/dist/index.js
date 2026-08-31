@@ -29337,8 +29337,8 @@ var require_resolve = __commonJS({
       }
       return count;
     }
-    function getFullPath(resolver, id = "", normalize) {
-      if (normalize !== false)
+    function getFullPath(resolver, id = "", normalize2) {
+      if (normalize2 !== false)
         id = normalizeId(id);
       const p = resolver.parse(id);
       return _getFullPath(resolver, p);
@@ -30735,7 +30735,7 @@ var require_fast_uri = __commonJS({
     "use strict";
     var { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizePercentEncoding, normalizePathEncoding, escapePreservingEscapes, reescapeHostDelimiters, isIPv4, nonSimpleDomain } = require_utils5();
     var { SCHEMES, getSchemeHandler } = require_schemes();
-    function normalize(uri, options) {
+    function normalize2(uri, options) {
       if (typeof uri === "string") {
         uri = /** @type {T} */
         normalizeString(uri, options);
@@ -31003,7 +31003,7 @@ var require_fast_uri = __commonJS({
     }
     var fastUri = {
       SCHEMES,
-      normalize,
+      normalize: normalize2,
       resolve,
       resolveComponent,
       equal,
@@ -37487,6 +37487,71 @@ var init_verifier_client = __esm({
   }
 });
 
+// src/lib/self-refutation-gate.ts
+function normalize(text) {
+  return text.trim().toLowerCase().replace(/\s+/g, " ");
+}
+function lastSentence(text) {
+  const parts = normalize(text).split(/[。；;\n]+/).map((part) => part.trim()).filter(Boolean);
+  return parts.at(-1) ?? "";
+}
+function concludesNoDefect(text) {
+  const sentence = lastSentence(text);
+  if (CONCESSIVE_MARKERS.some((marker) => sentence.includes(marker)))
+    return false;
+  return NEGATION_CONCLUSIONS.some((phrase) => sentence.includes(phrase));
+}
+function isSelfRefuting(finding) {
+  if (NO_OP_SUGGESTIONS.has(normalize(finding.suggestion)))
+    return true;
+  return concludesNoDefect(finding.evidence) || concludesNoDefect(finding.impact);
+}
+var NO_OP_SUGGESTIONS, NEGATION_CONCLUSIONS, CONCESSIVE_MARKERS;
+var init_self_refutation_gate = __esm({
+  "src/lib/self-refutation-gate.ts"() {
+    "use strict";
+    NO_OP_SUGGESTIONS = /* @__PURE__ */ new Set([
+      "\u65E0",
+      "\u65E0\u3002",
+      "none",
+      "none.",
+      "n/a",
+      "na",
+      "\u4E0D\u9002\u7528",
+      "\u4E0D\u9002\u7528\u3002",
+      "\u65E0\u9700\u4FEE\u6539",
+      "\u65E0\u9700\u4FEE\u6539\u3002",
+      "\u65E0\u9700\u6539\u52A8",
+      "\u65E0\u9700\u6539\u52A8\u3002",
+      "\u65E0\u9700\u53D8\u66F4",
+      "\u65E0\u9700\u53D8\u66F4\u3002",
+      "\u65E0\u95EE\u9898",
+      "\u65E0\u95EE\u9898\u3002",
+      "\u4E0D\u9700\u8981\u4FEE\u6539",
+      "\u4E0D\u9700\u8981\u4FEE\u6539\u3002",
+      "no change needed",
+      "no change needed.",
+      "no changes needed",
+      "no changes needed.",
+      "nothing to change",
+      "nothing to change."
+    ]);
+    NEGATION_CONCLUSIONS = [
+      "\u4E0D\u6784\u6210\u7F3A\u9677",
+      "\u4E0D\u6784\u6210\u95EE\u9898",
+      "\u65E0\u5B9E\u9645\u7F3A\u9677",
+      "\u65E0\u5B9E\u9645\u95EE\u9898",
+      "\u5E76\u975E\u7F3A\u9677",
+      "\u4E0D\u662F\u7F3A\u9677",
+      "not a defect",
+      "not an actual defect",
+      "no actual defect",
+      "not an issue"
+    ];
+    CONCESSIVE_MARKERS = ["\u4F46", "\u4E0D\u8FC7", "\u7136\u800C", "\u53EF\u662F", "\u53EA\u662F", "however", "but ", "except"];
+  }
+});
+
 // src/lib/arbiter.ts
 function groupKey(finding) {
   return `${finding.path}|${finding.line}`;
@@ -37495,6 +37560,16 @@ function arbitrate(candidates) {
   const internalDiagnostics = [];
   const confirmedCandidates = [];
   for (const candidate of candidates) {
+    if (isSelfRefuting(candidate.finding)) {
+      internalDiagnostics.push({
+        id: candidate.finding.id,
+        path: candidate.finding.path,
+        line: candidate.finding.line,
+        outcome: "rejected_self_refuted",
+        reason: "finding text concludes there is no defect / suggestion is a no-op"
+      });
+      continue;
+    }
     if (candidate.deterministicStatus === "failed") {
       internalDiagnostics.push({
         id: candidate.finding.id,
@@ -37564,6 +37639,7 @@ function arbitrate(candidates) {
 var init_arbiter = __esm({
   "src/lib/arbiter.ts"() {
     "use strict";
+    init_self_refutation_gate();
   }
 });
 

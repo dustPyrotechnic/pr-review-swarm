@@ -310,4 +310,36 @@ describe('不变式：合并不改变 (path, line) 集合', () => {
       ).toBe(true);
     }
   });
+
+  // deterministicStatus: 'passed' + verifier confirmed 是刻意的：证明这道门确实
+  // 排在那两者之前。样本取自 ios-source-learning#9 第 13 轮 bootstrap.sh:210，
+  // 那条被标成 [high]，建议字段就是「无。」。
+  it('drops a self-refuting candidate ahead of the deterministic and verifier gates', () => {
+    const result = arbitrate([
+      {
+        finding: makeFinding({ suggestion: '无。' }),
+        deterministicStatus: 'passed',
+        verifierConclusion: { status: 'confirmed' },
+      },
+    ]);
+
+    expect(result.findings).toHaveLength(0);
+    expect(result.internalDiagnostics).toHaveLength(1);
+    expect(result.internalDiagnostics[0]?.outcome).toBe('rejected_self_refuted');
+  });
+
+  it('keeps a real finding whose evidence merely concedes a point first', () => {
+    const result = arbitrate([
+      {
+        finding: makeFinding({
+          evidence: '计数逻辑正确，但 dry-run 分支漏了 FETCH_DONE 自增',
+          suggestion: 'dry-run 分支中也 FETCH_DONE=$((FETCH_DONE + 1))',
+        }),
+        deterministicStatus: 'passed',
+        verifierConclusion: { status: 'confirmed' },
+      },
+    ]);
+
+    expect(result.findings).toHaveLength(1);
+  });
 });

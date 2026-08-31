@@ -1,5 +1,9 @@
 # 回归评测门槛定基线 + arbiter 去重修复 实施计划
 
+> **状态：已完成（2026-08-14 门槛定基线；2026-08-15 #12 关闭、#11 部分改善）。**
+>
+> **落地后记（2026-08-20）：** #12 在 PR #14 关闭（3 用例 × 3 轮，陷阱 0/1）。#11 召回 0%/33.3% → 66.7%/66.7%，issue 仍开。全量 27×3 尚未在 #12 修复后重跑，故 `max_must_not_find_hits: 1` 仍保留；下次全量若陷阱为 0，按 Task 5 原约定删键。README / CHECKLIST / 根目录 AGENTS.md 已按此更新。
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 让 `benchmarks/thresholds.json` 的六个门槛值第一次建立在实测分布上，并修掉一个让误报数虚高的去重缺陷，使 nightly 的回归评测成为一条真正能拦住劣化的护栏。
@@ -71,7 +75,7 @@ go-missing-error-check: pkg/service/user.go:18 [maintainability]
 
 1. **测试文件位置**：单元测试与被测模块同目录同名（`action/src/lib/arbiter.ts` → `arbiter.test.ts`）；跨入口的集成测试放 `action/test/integration/`。
 2. **运行命令**：`cd action && npm test`；单文件 `npx vitest run src/lib/arbiter.test.ts`；单用例加 `-t "用例名"`。`benchmarks` 同理（`cd benchmarks && npm test`）。
-3. **硬禁令**：改任何 workflow / action 代码前先读 `docs/AGENTS.md`（8 条硬禁令）。不要为了让测试通过而放宽被测的安全属性。
+3. **硬禁令**：改任何 workflow / action 代码前先读 `docs/AGENTS.md`（现为 9 条）。不要为了让测试通过而放宽被测的安全属性。
 4. **`dist/` 必须同步**：任何改到 `action/src/` 的任务，commit 前跑 `cd action && npm run build` 并把 `dist/` 一并提交，否则 CI 的 `build-dist-no-drift` 会红。
 5. **每个 Task 一次 commit**，前缀用 `fix:` / `test:` / `ci:` / `docs:`。
 6. **评测会真的花钱**。`--gate --repeat=3` 全量一次约 $0.07、耗时约 17 分钟。不要为了「看一眼」反复全量跑；单用例调试用 `--case=<name> --repeat=2`。
@@ -379,6 +383,8 @@ Run: `git rm .github/workflows/tmp-eval-full.yml`
 **Step 3: 更新 README 的现状描述**
 
 当前那句「审核质量还在建立基线的阶段」要按事实更新：基线已经建立，但 retain cycle 识别与历史遗留区分两项已知不足，指向对应 issue。
+
+（2026-08-20 再次修订：#12 已关、#11 仍开；不要把 README 写回「两项都在跟踪」。）
 
 **Step 4: 全量验证**
 

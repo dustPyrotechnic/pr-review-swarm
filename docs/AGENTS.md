@@ -1,5 +1,7 @@
 # 硬禁令清单（修改 workflow/action 前必读）
 
+> 项目进度、仓库约定与下一步见仓库根目录 [`AGENTS.md`](../AGENTS.md) / [`CLAUDE.md`](../CLAUDE.md)。本文件只锁安全边界，不跟踪阶段状态。当前是 9 条硬禁令（第 9 条是内部 `uses:` 必须 pin 到完整 SHA）。
+
 以下每条均引用 `docs/plans/2026-07-13-pr-review-swarm-design.md`（设计文档）的具体行号，行号以撰写本文档时的版本为准；设计文档改版后如行号偏移，请以文中引用的原文语句重新定位。
 
 1. 禁止在任何 workflow 中对 PR head 执行 checkout（即 `ref:` 指向

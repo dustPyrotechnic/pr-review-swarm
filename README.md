@@ -4,16 +4,28 @@
 
 ## 当前阶段
 
-**Phase 1-3 代码均已完成**（shadow mode → comment-only → 真实 REQUEST_CHANGES），并在沙盒仓库端到端验证通过——但请注意这里的"端到端"指的是**流程**跑通（Check 能终结、Review 能发出、权限隔离成立），**不含审核质量**。回归评测（`benchmarks/`）已经建立实测基线：27 个用例 × 3 轮，**召回率 88.9%~91.4%**、incomplete 0%、p95 端到端 30 秒、成本约 $0.003/PR。过程中查出并修掉四个生产缺陷（[#9](https://github.com/dustPyrotechnic/pr-review-swarm/issues/9) 模型拿不到行号锚点、[#10](https://github.com/dustPyrotechnic/pr-review-swarm/issues/10) 畸形 tool-call 不重试、arbiter 去重键含自由文本、评测层拿 category 做精确匹配），其中 #9 曾让有效召回率接近 0。
+**产品形态已落地，当前发布 v1.1.1**（2026-08-18）。Phase 1–3（shadow mode → comment-only → 真实 `REQUEST_CHANGES`）代码完成，沙盒仓库验证的是**流程**（Check 能终结、Review 能发出、权限隔离成立），**不含审核质量**。Phase 4（把 `PR Review Swarm / verdict` 设为 required check）已按需求跳过，不在计划范围内。
 
-两项已知不足在跟踪中：[#11](https://github.com/dustPyrotechnic/pr-review-swarm/issues/11) retain cycle 类缺陷识别率过低（`swift-retain-cycle` 三轮全部漏报）、[#12](https://github.com/dustPyrotechnic/pr-review-swarm/issues/12) 模型不区分「本次引入」与「历史遗留」。误报仍偏高——找到真问题时会顺手多报几条低价值条目（真阴性用例侧 14 个里 13 个零误报，所以不是无差别乱报）。`publish` 现在会按裁决结果发布真正的 GitHub Review：有问题时提交 `REQUEST_CHANGES`，没问题时只提交 `COMMENT`（**机器人永不提交 APPROVE，合并与否始终由人工最终确认**）。Phase 4（把 `PR Review Swarm / verdict` 设为 required check）已按需求跳过，不在计划范围内。完整设计见 [`docs/plans/2026-07-13-pr-review-swarm-design.md`](docs/plans/2026-07-13-pr-review-swarm-design.md)，实施计划见 [`docs/plans/2026-07-18-pr-review-swarm-implementation-plan.md`](docs/plans/2026-07-18-pr-review-swarm-implementation-plan.md)，安全与集成测试对账见 [`action/test/integration/CHECKLIST.md`](action/test/integration/CHECKLIST.md)。
+回归评测（`benchmarks/`，27 用例 × 3 轮，`deepseek-chat`）已定基线：召回率 **88.9%–91.4%**、incomplete 0%、p95 端到端约 30 秒、成本约 $0.003/PR。过程中修掉的生产缺陷：[#9](https://github.com/dustPyrotechnic/pr-review-swarm/issues/9) 行号锚点、[#10](https://github.com/dustPyrotechnic/pr-review-swarm/issues/10) 畸形 tool-call 重试、arbiter 去重键含自由文本、评测层拿 `category` 做精确匹配。其中 #9 曾让有效召回接近 0。
 
-## 目录结构（计划）
+质量侧（以 2026-08-15 的 skill/夹具复测为准）：
+
+- [#12](https://github.com/dustPyrotechnic/pr-review-swarm/issues/12) **已关闭**：prompt 把「上下文行属于既有代码」写成硬规则，夹具钉回 2019 TODO 行后，3 用例 × 3 轮陷阱命中 0/1。全量 27×3 尚未在此次修复后重跑，因此 `benchmarks/thresholds.json` 仍保留 `max_must_not_find_hits: 1`；下次全量若陷阱仍为 0，应删掉该键（缺键回落到 0）。
+- [#11](https://github.com/dustPyrotechnic/pr-review-swarm/issues/11) **仍开**：补了 ObjC 清单和 Swift retain cycle 判据，并把夹具改成真引用环之后，`swift-retain-cycle` / `objc-retain-cycle-block` 召回从 0% / 33.3% 升到 **66.7%**，尚未稳定。
+- 误报仍偏高：找到真问题时会顺手多报几条低价值条目（真阴性 14 个里 13 个零误报，所以不是无差别乱报）。
+
+`publish` 按裁决发布 GitHub Review：有问题提交 `REQUEST_CHANGES`，没问题只提交 `COMMENT`（**机器人永不提交 APPROVE，合并与否始终由人工最终确认**）。
+
+完整设计见 [`docs/plans/2026-07-13-pr-review-swarm-design.md`](docs/plans/2026-07-13-pr-review-swarm-design.md)，实施计划见 [`docs/plans/2026-07-18-pr-review-swarm-implementation-plan.md`](docs/plans/2026-07-18-pr-review-swarm-implementation-plan.md)，安全与集成测试对账见 [`action/test/integration/CHECKLIST.md`](action/test/integration/CHECKLIST.md)。给后续 agent 的仓库约定与下一步见根目录 [`AGENTS.md`](AGENTS.md) / [`CLAUDE.md`](CLAUDE.md)。
+
+## 目录结构
 
 ```
 .
-├── docs/plans/          # 设计文档
+├── docs/plans/          # 设计文档与各阶段实施计划
+├── docs/AGENTS.md       # 硬禁令清单（改 workflow/action 前必读）
 ├── action/              # 中央 custom action 源码（prepare/analyze/publish/finalize 入口）+ 预构建 dist/
+├── cli/                 # 一键部署 CLI（pr-agent deploy）
 ├── skills/              # Agent 可装备的 Markdown 审核 checklist
 ├── schemas/             # candidate finding / finding 的 JSON Schema
 ├── benchmarks/          # 回归评测：用例集 + 指标门槛（nightly 跑，需 DEEPSEEK_API_KEY）

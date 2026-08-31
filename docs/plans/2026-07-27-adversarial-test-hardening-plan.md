@@ -1,5 +1,7 @@
 # 对抗性测试加固实施计划（Adversarial Test Hardening）
 
+> **状态：已完成（2026-07-28）。** 逐 Task 对账见 `action/test/integration/CHECKLIST.md`「对抗性测试对账」。Task 2.2 第 4 点按设计不适用，明确不做。
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 在现有测试（`action/test/integration/CHECKLIST.md` 已对账的 26 条）之上，补齐暴力测试、恶意/对抗测试与不变式测试，把"静默漏审"和"权限越界"这两类无法从外部观测的失败模式变成 CI 可拦截的红灯。
@@ -16,7 +18,7 @@
 
 1. **测试文件位置约定**：单元测试与被测模块同目录同名（`action/src/lib/verdict.ts` → `action/src/lib/verdict.test.ts`）；跨入口的集成测试放 `action/test/integration/`。CLI 测试同理（`cli/src/lib/*.test.mjs`）。
 2. **运行命令**：`cd action && npm test`（vitest），单文件 `npx vitest run src/lib/verdict.test.ts`，单用例 `npx vitest run src/lib/verdict.test.ts -t "用例名"`。CLI：`cd cli && npm test`。
-3. **硬禁令**：修改任何 workflow / action 代码前，先读 `docs/AGENTS.md`（8 条硬禁令）。本计划的多个任务就是把那 8 条变成自动化断言，实现时不要为了让测试通过而放宽被测的安全属性。
+3. **硬禁令**：修改任何 workflow / action 代码前，先读 `docs/AGENTS.md`（现为 9 条，第 9 条是内部 `uses:` pin SHA）。本计划的多个任务就是把那些硬禁令变成自动化断言，实现时不要为了让测试通过而放宽被测的安全属性。
 4. **每完成一个 Task 就 commit 一次**，commit message 用 `test:` 或 `ci:` 前缀。
 5. **不要 checkout PR head、不要在测试里发真实网络请求**：所有 GitHub / DeepSeek 交互一律用注入的 fake client（参考现有 `publish.test.ts`、`watchdog.test.ts` 的写法）。
 6. **本计划的测试代码是"意图 + 骨架"**：作者写计划时只读了文档与文件名，**没有读实现源码**。每个 Task 的 Step 0 都要求先打开被测模块确认真实导出名与参数签名，再按实际签名调整示例代码。签名对不上时以源码为准，不要改源码去迁就计划里的示例。

@@ -1,5 +1,7 @@
 # Prepare Artifact File Transport Implementation Plan
 
+> **状态：已完成。** `prepare` 把 artifact 写到文件，经 `actions/upload-artifact` / `download-artifact` 传给 `analyze`；`analyze` 的 `permissions: {}` 未扩大。
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Stop the `review / prepare` job from failing with "Job outputs exceed 1,048,576 bytes" by moving the `PrepareArtifact` payload off GitHub Actions job outputs and onto a file transported via `actions/upload-artifact`/`actions/download-artifact`, and clear the Node 20 deprecation warning on the action runtime.

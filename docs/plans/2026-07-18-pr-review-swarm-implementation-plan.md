@@ -1,5 +1,7 @@
 # PR Review Swarm 实施计划
 
+> **状态（2026-08-20）：Phase 0–3 已落地，当前发布 v1.1.1。Phase 4 已确认跳过。** 质量基线见 `benchmarks/thresholds.json`；#12 已关，#11 仍开。本文是当时的任务拆分，不再当作待办清单。
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 把 `docs/plans/2026-07-13-pr-review-swarm-design.md`（下称"设计文档"）落地为可运行的中央 reusable workflow + custom action + schemas + skills + benchmarks，按"上线门槛"分四个阶段逐步启用能力。
@@ -913,6 +915,8 @@ jobs:
 ---
 
 ## Phase 4：Required Check（主要为运维操作）
+
+> **已跳过（2026-07-23 确认）。** 是否把 Check 设为合并门禁是逐仓库的可选运维步骤，不在本仓库代码计划内。
 
 ### Task 4.1：长期可靠性观察
 

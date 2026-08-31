@@ -188,5 +188,16 @@ Task 9.x 落地后又走了一轮自审。这一层的缺陷有个共同特征�
 
   修完后 per-case 误报明显下降（`hardcoded-credential` 5→2、`insecure-random` 3→0、`go-missing-error-check` 3→2），但**总召回率 91.4%→88.9%、抖动 0.168→0.241 反而变差**。这两项与去重无关：合并按 `path|line` 分组，组内成员这两个字段必然相同，所以合并只减少「同一位置的重复条目数」，减不掉位置的种类——而匹配规则与抖动度量都只看 `(path, line)` 集合。反向证据在同一批数据里：`historical-issue-not-introduced` 的误报从 0 涨到 1，而去重只减不增。结论是轮间噪音，已把这条推理写成不变式断言（`a613e15`），免得下一次指标下降再也分不清是回归还是噪音。
 
-  **仍然超标的一项**：陷阱命中（issue #12，模型不区分本次引入与历史遗留）。该门槛从「>0 即红」改为可配置并暂定 1，因为一条永远红的门槛等于没有门槛——红灯疲劳之后没人会再看它。#12 修完必须删掉 `max_must_not_find_hits` 键，`checkThresholds` 缺键时自动回落到 0，这条由单测锁住。另有 issue #11（retain cycle 识别率过低，`swift-retain-cycle` 三轮全 0% 且零候选零误报）。
+  **当时仍然超标的一项**：陷阱命中（issue #12，模型不区分本次引入与历史遗留）。该门槛从「>0 即红」改为可配置并暂定 1，因为一条永远红的门槛等于没有门槛——红灯疲劳之后没人会再看它。#12 修完必须删掉 `max_must_not_find_hits` 键，`checkThresholds` 缺键时自动回落到 0，这条由单测锁住。另有 issue #11（retain cycle 识别率过低，当时 `swift-retain-cycle` 三轮全 0% 且零候选零误报）。
+
+- **#11 / #12 后续（2026-08-15，PR #14）**：prompt 把「上下文行属于既有代码」写成硬规则（`SCOPE_CONTRACT`），补了 `objc-review` 与 Swift retain cycle 判据，并把两处夹具改成真引用环 / 钉回 2019 TODO 行。三条用例 × 三轮复测（PR #13 / run 31865559336）：
+
+  | 用例 | 修前 nightly | 2026-08-15 |
+  |---|---|---|
+  | `swift-retain-cycle` | 召回 0% | 召回 **66.7%** |
+  | `objc-retain-cycle-block` | 召回 33.3% | 召回 **66.7%**，误报 0 |
+  | `historical-todo-in-touched-file` | 陷阱 1/1 | 陷阱 **0/1** |
+
+  **#12 已关闭。** #11 好转但未完（仍有一轮 incomplete、verifier 会拒闭包表述、有一轮锚在属性行而不是 `delegate = self`）。全量 27×3 尚未在此次修复后重跑，因此 `max_must_not_find_hits: 1` 仍留在 `thresholds.json`——下次全量若陷阱仍为 0，按原约定删掉该键。
+
 - **计划附录 A 的 5 项仍需沙盒人工验证**，本轮未覆盖，理由不变（fork PR 的真实凭据可见性、分支保护真实拒绝 dismiss、`cancel-in-progress` 真实时序、required check 真实门禁、真实模型在注入语料下的行为）。

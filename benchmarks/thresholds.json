@@ -7,7 +7,7 @@
   "_baseline_false_positives": "三轮实测 5 / 5 / 4（最差一轮口径）。定在观测最大值 5，不再放宽：误报是这个产品的头号杀手，宁可偶发红也不要把「涨到 6」变成合法状态。剩余误报的治理见计划附录。",
   "max_false_positives": 5,
 
-  "_baseline_must_not_find": "三轮均为 1，且始终是同一条（historical-todo-in-touched-file，模型把文件里 2019 年的历史 TODO 当成本次引入的问题）。这是 issue #12 的已知缺口。刻意不定成 0：一条永远红的门槛等于没有门槛，大家会开始习惯性忽略它，等真踩中第 2 个陷阱时也看不见。#12 修复后必须把本项删掉——checkThresholds 缺这个键时自动回落到 0。",
+  "_baseline_must_not_find": "2026-08-13 三轮均为 1，且始终是 historical-todo-in-touched-file（当时测到的是 issue #12）。#12 已于 2026-08-15 关闭：3 用例 × 3 轮陷阱命中 0/1。全量 27×3 尚未在此次修复后重跑，所以本键暂时保留为 1，避免用局部复测直接收紧 nightly。下次全量若陷阱仍为 0，必须删掉本键——checkThresholds 缺键时自动回落到 0。",
   "max_must_not_find_hits": 1,
 
   "_baseline_incomplete": "三轮实测 1.2% / 0.0% / 0.0%。1.2% 那次是 issue #10（畸形 tool-call 不重试）造成的，修完未再复现。留一档余量应对偶发。",

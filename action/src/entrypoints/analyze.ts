@@ -47,6 +47,10 @@ export function writeAnalyzeArtifactToFile(artifact: AnalyzeArtifact, filePath: 
 
 const AGENT_NAMES = ['generic-correctness', 'generic-security', 'generic-maintainability'] as const;
 
+// 连续这么多次 expert 调用失败就停止本轮。单次格式抖动不该让整轮报废，但
+// DeepSeek 整体不可用时也不该把 maxShardsPerRun × AGENT_NAMES 全试一遍。
+const MAX_CONSECUTIVE_EXPERT_FAILURES = 3;
+
 export interface AnalyzeLimits {
   maxCandidateFindingsPerAgentPerShard: number;
   maxSkillRequestsPerRun: number;
@@ -163,15 +167,27 @@ export async function runAnalysis(input: AnalyzeCoreInput): Promise<AnalyzeCoreR
   let stop = false;
   let anyRequiredStageFailed = false;
   let stageFailureReason: string | undefined;
+  let consecutiveExpertFailures = 0;
 
   outer: for (const shard of input.prepareArtifact.shards) {
     const filePaths = shard.files.map((f) => f.path);
     const shardContent = buildShardContent(shard);
 
     for (const agentName of AGENT_NAMES) {
+      // 加载 skill 失败是**确定性**的本地错误（畸形 front matter 之类），下一个
+      // agent 只会同样失败。对它 fan-out 纯属烧钱，仍然立刻停。
+      let skills;
+      try {
+        skills = skillsForAgent(agentName, filePaths, skillIndex, loadSkillFn);
+      } catch (err) {
+        anyRequiredStageFailed = true;
+        stageFailureReason ??= err instanceof Error ? err.message : String(err);
+        stop = true;
+        break outer;
+      }
+
       let result;
       try {
-        const skills = skillsForAgent(agentName, filePaths, skillIndex, loadSkillFn);
         result = await runExpert({
           shardId: shard.id,
           agentName,
@@ -182,15 +198,23 @@ export async function runAnalysis(input: AnalyzeCoreInput): Promise<AnalyzeCoreR
           maxCandidateFindingsPerAgentPerShard: input.limits.maxCandidateFindingsPerAgentPerShard,
           maxSchemaRetries: input.limits.maxExpertSchemaRetries,
         });
+        consecutiveExpertFailures = 0;
       } catch (err) {
-        // A DeepSeek outage, a model response that fails expert-output schema
-        // validation, or a malformed skill file (skillsForAgent/loadSkillFn)
-        // is exactly as "required stage failed" as a verifier failure below —
-        // degrade to incomplete instead of hard-failing the whole job.
+        // 一个 agent 的格式抖动不该让整轮审核报废。verdict 仍降级为 incomplete
+        //（下游据此加免责横幅、并决定 review event），但其余 shard × agent 照跑
+        // —— 部分覆盖远好于零覆盖。2026-08-28/29 的 ios-source-learning#9 上，
+        // 5 个 incomplete 轮次全部是单次模型格式抖动引发的整轮中断，findings
+        // 数因此只有 1/1/2。
         anyRequiredStageFailed = true;
-        stageFailureReason = err instanceof Error ? err.message : String(err);
-        stop = true;
-        break outer;
+        stageFailureReason ??= err instanceof Error ? err.message : String(err);
+        consecutiveExpertFailures += 1;
+        // 但 DeepSeek 整体不可用时也不能把 20 shard × 3 agent 全试一遍（每次
+        // 客户端内部还有 3 次退避重试）。连续失败到阈值就认定不是抖动，停。
+        if (consecutiveExpertFailures >= MAX_CONSECUTIVE_EXPERT_FAILURES) {
+          stop = true;
+          break outer;
+        }
+        continue;
       }
 
       allCandidates.push(...result.output.candidate_findings);
@@ -245,10 +269,14 @@ export async function runAnalysis(input: AnalyzeCoreInput): Promise<AnalyzeCoreR
             maxSchemaRetries: input.limits.maxExpertSchemaRetries,
           });
         } catch (err) {
+          // 与主循环同一策略：单次抖动跳过这个 shard，连续失败才停。
           anyRequiredStageFailed = true;
           stageFailureReason ??= err instanceof Error ? err.message : String(err);
-          break supplement;
+          consecutiveExpertFailures += 1;
+          if (consecutiveExpertFailures >= MAX_CONSECUTIVE_EXPERT_FAILURES) break supplement;
+          continue;
         }
+        consecutiveExpertFailures = 0;
 
         allCandidates.push(...result.output.candidate_findings);
 

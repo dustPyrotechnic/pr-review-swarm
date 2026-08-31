@@ -92,6 +92,7 @@ const baseLimits = {
   maxVerifierCallsPerRun: 200,
   maxFinalFindingsPerRun: 200,
   maxExpertSchemaRetries: 0,
+  maxVerifierSchemaRetries: 0,
 };
 
 describe('runAnalysis', () => {
@@ -307,8 +308,95 @@ describe('runAnalysis', () => {
 
     expect(result.anyRequiredStageFailed).toBe(true);
     expect(result.findings).toEqual([]);
-    // should stop scheduling further expert calls once one has failed
-    expect(client.sendStructuredRequest).toHaveBeenCalledTimes(1);
+    // 单次失败不再中断整轮（那会让一次格式抖动报废整份审核），但连续
+    // MAX_CONSECUTIVE_EXPERT_FAILURES 次就认定不是抖动而是真的挂了，熔断。
+    expect(client.sendStructuredRequest).toHaveBeenCalledTimes(3);
+  });
+
+  it('skips only the failing agent and still collects findings from the rest', async () => {
+    let expertCalls = 0;
+    const client = {
+      sendStructuredRequest: vi.fn().mockImplementation((req: { systemPrompt: string }) => {
+        // client 同时供 expert 和 verifier 使用，必须按 systemPrompt 分流，
+        // 否则 verifier 会拿到 expert 的输出、schema 校验失败。
+        if (req.systemPrompt.includes('independent verifier')) {
+          return Promise.resolve({ status: 'confirmed' });
+        }
+        expertCalls += 1;
+        if (expertCalls === 1) {
+          return Promise.reject(
+            new Error('deepseek-client: tool call arguments are not valid JSON'),
+          );
+        }
+        const agent = req.systemPrompt.includes('generic-security')
+          ? 'generic-security'
+          : 'generic-maintainability';
+        return Promise.resolve({
+          shard_id: 'shard-1',
+          agent,
+          coverage_complete: true,
+          candidate_findings: [
+            {
+              id: `cf-${expertCalls}`,
+              path: 'src/foo.ts',
+              line: 1,
+              side: 'RIGHT',
+              severity: 'high',
+              confidence: 'high',
+              category: 'correctness',
+              title: 'issue',
+              evidence: 'evidence',
+              impact: 'impact',
+              suggestion: 'suggestion',
+              introduced_by_pr: true,
+              source_agent: agent,
+            },
+          ],
+        });
+      }),
+    };
+
+    const result = await runAnalysis({
+      prepareArtifact: makeArtifact(),
+      skillIndexMd: SKILL_INDEX_MD,
+      loadSkillFn: fakeLoadSkill,
+      model: 'deepseek-test-model',
+      client,
+      limits: baseLimits,
+    });
+
+    // 第一个 agent 挂了，但另外两个照跑，findings 拿得到
+    expect(result.anyRequiredStageFailed).toBe(true);
+    expect(expertCalls).toBe(3);
+    expect(result.findings.length).toBeGreaterThan(0);
+  });
+
+  it('resets the consecutive-failure counter after a success, so isolated glitches never trip the breaker', async () => {
+    let expertCalls = 0;
+    const client = {
+      sendStructuredRequest: vi.fn().mockImplementation((req: { systemPrompt: string }) => {
+        if (req.systemPrompt.includes('independent verifier')) {
+          return Promise.resolve({ status: 'confirmed' });
+        }
+        expertCalls += 1;
+        // 失败、成功、失败 —— 从不连续 3 次，熔断不该触发
+        if (expertCalls === 1 || expertCalls === 3) {
+          return Promise.reject(new Error('transient glitch'));
+        }
+        return Promise.resolve(emptyExpertOutput('shard-1', 'generic-security'));
+      }),
+    };
+
+    await runAnalysis({
+      prepareArtifact: makeArtifact(),
+      skillIndexMd: SKILL_INDEX_MD,
+      loadSkillFn: fakeLoadSkill,
+      model: 'deepseek-test-model',
+      client,
+      limits: baseLimits,
+    });
+
+    expect(expertCalls).toBe(3);
   });
 
   it('surfaces the underlying error message when an expert call fails, instead of swallowing it silently', async () => {

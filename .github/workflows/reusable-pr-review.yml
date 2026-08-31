@@ -74,6 +74,10 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.stale != 'true'
     runs-on: ubuntu-latest
+    # 实测一轮 analyze 约 2-3 分钟。默认的 360 分钟对它毫无意义：单个 expert
+    # 调用失败现在只跳过该 agent 而非中断整轮，DeepSeek 侧若挂在慢响应上，
+    # 没有超时就只能靠熔断计数兜底。20 分钟给足了余量。
+    timeout-minutes: 20
     # Hard requirement: analyze gets no GitHub API access at all — it only
     # ever sees the already-prepared, already-redacted artifact from
     # `prepare`, plus the DeepSeek secret. See docs/AGENTS.md #3.

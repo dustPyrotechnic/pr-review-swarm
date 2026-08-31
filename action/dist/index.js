@@ -37776,14 +37776,23 @@ async function runAnalysis(input) {
   let stop = false;
   let anyRequiredStageFailed = false;
   let stageFailureReason;
+  let consecutiveExpertFailures = 0;
   outer:
     for (const shard of input.prepareArtifact.shards) {
       const filePaths = shard.files.map((f) => f.path);
       const shardContent = buildShardContent(shard);
       for (const agentName of AGENT_NAMES) {
+        let skills;
+        try {
+          skills = skillsForAgent(agentName, filePaths, skillIndex, loadSkillFn);
+        } catch (err) {
+          anyRequiredStageFailed = true;
+          stageFailureReason ??= err instanceof Error ? err.message : String(err);
+          stop = true;
+          break outer;
+        }
         let result;
         try {
-          const skills = skillsForAgent(agentName, filePaths, skillIndex, loadSkillFn);
           result = await runExpert({
             shardId: shard.id,
             agentName,
@@ -37794,11 +37803,16 @@ async function runAnalysis(input) {
             maxCandidateFindingsPerAgentPerShard: input.limits.maxCandidateFindingsPerAgentPerShard,
             maxSchemaRetries: input.limits.maxExpertSchemaRetries
           });
+          consecutiveExpertFailures = 0;
         } catch (err) {
           anyRequiredStageFailed = true;
-          stageFailureReason = err instanceof Error ? err.message : String(err);
-          stop = true;
-          break outer;
+          stageFailureReason ??= err instanceof Error ? err.message : String(err);
+          consecutiveExpertFailures += 1;
+          if (consecutiveExpertFailures >= MAX_CONSECUTIVE_EXPERT_FAILURES) {
+            stop = true;
+            break outer;
+          }
+          continue;
         }
         allCandidates.push(...result.output.candidate_findings);
         if (result.output.skill_requests) {
@@ -37851,8 +37865,12 @@ async function runAnalysis(input) {
           } catch (err) {
             anyRequiredStageFailed = true;
             stageFailureReason ??= err instanceof Error ? err.message : String(err);
-            break supplement;
+            consecutiveExpertFailures += 1;
+            if (consecutiveExpertFailures >= MAX_CONSECUTIVE_EXPERT_FAILURES)
+              break supplement;
+            continue;
           }
+          consecutiveExpertFailures = 0;
           allCandidates.push(...result.output.candidate_findings);
           if (result.hardLimitHit) {
             hardLimitHit = true;
@@ -37968,7 +37986,7 @@ async function run4() {
   core5.setOutput("any_required_stage_failed", String(result.anyRequiredStageFailed));
   core5.setOutput("internal_diagnostics", JSON.stringify(result.internalDiagnostics));
 }
-var import_node_fs4, core5, AGENT_NAMES, LINE_NO_WIDTH;
+var import_node_fs4, core5, AGENT_NAMES, MAX_CONSECUTIVE_EXPERT_FAILURES, LINE_NO_WIDTH;
 var init_analyze = __esm({
   "src/entrypoints/analyze.ts"() {
     "use strict";
@@ -37984,6 +38002,7 @@ var init_analyze = __esm({
     init_arbiter();
     init_artifact_reader();
     AGENT_NAMES = ["generic-correctness", "generic-security", "generic-maintainability"];
+    MAX_CONSECUTIVE_EXPERT_FAILURES = 3;
     LINE_NO_WIDTH = 6;
   }
 });

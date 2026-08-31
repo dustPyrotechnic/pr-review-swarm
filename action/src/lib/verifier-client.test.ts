@@ -80,6 +80,15 @@ describe('verifyFinding', () => {
     );
   });
 
+  it('tells the verifier to reject findings that request no change', async () => {
+    const client = { sendStructuredRequest: vi.fn().mockResolvedValue({ status: 'confirmed' }) };
+
+    await verifyFinding({ ...baseArgs, finding: makeFinding(), client });
+
+    const call = client.sendStructuredRequest.mock.calls[0]![0] as { systemPrompt: string };
+    expect(call.systemPrompt).toContain('does not actually ask for a change');
+  });
+
   it('wraps a schema validation failure as VerifierUnavailableError', async () => {
     const client = { sendStructuredRequest: vi.fn().mockResolvedValue({ status: 'not-a-valid-status' }) };
 

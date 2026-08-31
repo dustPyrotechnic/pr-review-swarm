@@ -37330,6 +37330,8 @@ function buildExpertSystemPrompt(agentName, skillBodies) {
     "Only report issues introduced, exposed, expanded, or made reachable by this PR. Follow every checklist below.",
     LINE_NUMBER_CONTRACT,
     SCOPE_CONTRACT,
+    TITLE_AND_SEVERITY_CONTRACT,
+    OUTPUT_LANGUAGE_CONTRACT,
     ...skillBodies
   ].join("\n\n");
 }
@@ -37359,6 +37361,26 @@ function fillMissingSourceAgent(raw, agentName) {
     })
   };
 }
+function clampTitles(raw) {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw))
+    return raw;
+  const obj = raw;
+  if (!Array.isArray(obj.candidate_findings))
+    return raw;
+  return {
+    ...obj,
+    candidate_findings: obj.candidate_findings.map((finding) => {
+      if (finding === null || typeof finding !== "object" || Array.isArray(finding))
+        return finding;
+      const entry = finding;
+      if (typeof entry.title !== "string")
+        return entry;
+      const firstLine = entry.title.split("\n")[0].trim();
+      const clamped = firstLine.length > MAX_TITLE_CHARS ? `${firstLine.slice(0, MAX_TITLE_CHARS - 1)}\u2026` : firstLine;
+      return clamped.length > 0 ? { ...entry, title: clamped } : entry;
+    })
+  };
+}
 async function requestAndValidate(input, systemPrompt, userPrompt) {
   const rawResponse = await input.client.sendStructuredRequest({
     model: input.model,
@@ -37366,7 +37388,9 @@ async function requestAndValidate(input, systemPrompt, userPrompt) {
     userPrompt,
     jsonSchema: expertOutputSchemaForModel
   });
-  const raw = fillMissingSourceAgent(coerceStringifiedBoolean(rawResponse), input.agentName);
+  const raw = clampTitles(
+    fillMissingSourceAgent(coerceStringifiedBoolean(rawResponse), input.agentName)
+  );
   const result = validate(
     "https://pr-review-swarm/schemas/expert-output.schema.json",
     raw
@@ -37398,7 +37422,7 @@ async function runExpert(input) {
   const hardLimitHit = data.coverage_complete !== true || data.candidate_findings.length >= input.maxCandidateFindingsPerAgentPerShard;
   return { output: data, hardLimitHit };
 }
-var ExpertOutputSchemaError, expertOutputSchemaForModel, LINE_NUMBER_CONTRACT, SCOPE_CONTRACT;
+var ExpertOutputSchemaError, expertOutputSchemaForModel, LINE_NUMBER_CONTRACT, SCOPE_CONTRACT, TITLE_AND_SEVERITY_CONTRACT, OUTPUT_LANGUAGE_CONTRACT, MAX_TITLE_CHARS;
 var init_expert_runner = __esm({
   "src/lib/expert-runner.ts"() {
     "use strict";
@@ -37416,6 +37440,9 @@ var init_expert_runner = __esm({
     });
     LINE_NUMBER_CONTRACT = 'Each diff line is prefixed with its line number in the post-image \u2014 the file as it will be *after* this PR. When you report a finding, `line` MUST be one of those printed numbers and `side` MUST be "RIGHT". Do not count lines yourself and do not guess: a finding whose line is not one of the printed numbers is discarded, however correct the underlying observation may be. Removed lines are shown with a "-" marker and no number because they do not exist in the post-image \u2014 you cannot anchor a finding to them; anchor it to the surviving line that carries the problem instead.';
     SCOPE_CONTRACT = 'Lines marked "+" are the ones this PR adds or rewrites. Lines with no marker are context: they already exist in the codebase and are shown only so you can understand the change. A defect that lives entirely on a context line, pre-dates this PR, and is untouched by it is OUT OF SCOPE \u2014 do not report it, no matter how real it is. Someone reading this review needs to know what *this change* broke; a historical TODO or an old questionable pattern that happens to sit near the diff is noise that buries the findings that matter. The exception is causal, not positional: if this PR makes existing code reachable for the first time, feeds it input it never had to handle, or otherwise turns a latent problem into a live one, that IS in scope \u2014 report it and say in `evidence` which added line causes it.';
+    TITLE_AND_SEVERITY_CONTRACT = 'Write the `title` LAST, after you have settled on a conclusion. It MUST be a single declarative sentence naming the defect, under 60 characters, with no question marks and no "however" / "but" / "no, actually" \u2014 none of your reasoning process belongs in it. `severity` must match that same final conclusion. If your analysis ends with the code being correct, do not submit the finding at all, and never submit one whose `suggestion` is "\u65E0" / "\u65E0\u9700\u4FEE\u6539" / "none": a finding is a request for a change, so if you are not requesting a change, there is no finding.';
+    OUTPUT_LANGUAGE_CONTRACT = "Write `title`, `evidence`, `impact` and `suggestion` in Simplified Chinese\uFF08\u7B80\u4F53\u4E2D\u6587\uFF09. Keep identifiers, file paths, commands and quoted code verbatim in their original form.";
+    MAX_TITLE_CHARS = 80;
   }
 });
 
@@ -37526,7 +37553,7 @@ var init_verifier_client = __esm({
     };
     VerifierSchemaError = class extends VerifierUnavailableError {
     };
-    VERIFIER_SYSTEM_PROMPT = `You are an independent verifier reviewing a single candidate finding raised by another reviewer. Actively look for counterexamples, missing preconditions, and existing safeguards that would make this finding invalid. If the finding claims a cross-file causal link (cross_file_causal_claim), you must locate a real call site or reference in the given context that supports the claim in evidence_refs \u2014 do not accept the claim on the reviewer's word alone. Respond with status "confirmed" only if the finding holds up after this scrutiny; otherwise respond "rejected".`;
+    VERIFIER_SYSTEM_PROMPT = 'You are an independent verifier reviewing a single candidate finding raised by another reviewer. Actively look for counterexamples, missing preconditions, and existing safeguards that would make this finding invalid. If the finding claims a cross-file causal link (cross_file_causal_claim), you must locate a real call site or reference in the given context that supports the claim in evidence_refs \u2014 do not accept the claim on the reviewer\'s word alone. Respond with status "confirmed" only if the finding holds up after this scrutiny; otherwise respond "rejected". Reject the finding outright if its own text concludes that the code is correct, or if its `suggestion` field does not actually ask for a change (for example "\u65E0", "\u65E0\u9700\u4FEE\u6539", "none") \u2014 a finding that requests nothing is not a finding, however sound its analysis is.';
   }
 });
 

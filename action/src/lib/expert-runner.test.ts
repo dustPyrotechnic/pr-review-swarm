@@ -196,6 +196,52 @@ describe('runExpert', () => {
     expect(result.output.candidate_findings[0]?.source_agent).toBe('generic-security');
   });
 
+  it('includes the title/severity and output-language contracts in the system prompt', async () => {
+    const client = {
+      sendStructuredRequest: vi.fn().mockResolvedValue(makeValidExpertOutput(1, true)),
+    };
+
+    await runExpert({ ...baseInput, client });
+
+    const call = client.sendStructuredRequest.mock.calls[0]![0] as { systemPrompt: string };
+    expect(call.systemPrompt).toContain('Write the `title` LAST');
+    expect(call.systemPrompt).toContain('简体中文');
+  });
+
+  // 实测第 6 轮的真实标题，把自问自答写进了 title
+  it('clamps an over-long title instead of rejecting the whole response', async () => {
+    const output = makeValidExpertOutput(1, true);
+    output.candidate_findings[0]!.title =
+      'Non-progress lines from git stderr written verbatim into a predictable? no, mktemp temp log then catted';
+    const client = { sendStructuredRequest: vi.fn().mockResolvedValue(output) };
+
+    const result = await runExpert({ ...baseInput, client });
+
+    const title = result.output.candidate_findings[0]!.title;
+    expect(title.length).toBeLessThanOrEqual(80);
+    expect(title.endsWith('…')).toBe(true);
+  });
+
+  it('keeps only the first line when the model puts a whole paragraph in the title', async () => {
+    const output = makeValidExpertOutput(1, true);
+    output.candidate_findings[0]!.title = '计数不一致\n第二行是推理过程';
+    const client = { sendStructuredRequest: vi.fn().mockResolvedValue(output) };
+
+    const result = await runExpert({ ...baseInput, client });
+
+    expect(result.output.candidate_findings[0]!.title).toBe('计数不一致');
+  });
+
+  it('leaves a well-formed short title untouched', async () => {
+    const output = makeValidExpertOutput(1, true);
+    output.candidate_findings[0]!.title = 'dry-run 分支漏了 FETCH_DONE 自增';
+    const client = { sendStructuredRequest: vi.fn().mockResolvedValue(output) };
+
+    const result = await runExpert({ ...baseInput, client });
+
+    expect(result.output.candidate_findings[0]!.title).toBe('dry-run 分支漏了 FETCH_DONE 自增');
+  });
+
   it('does not retry a network/transport error — only schema-validation failures are retried here', async () => {
     const client = {
       sendStructuredRequest: vi.fn().mockRejectedValue(new Error('network boom')),

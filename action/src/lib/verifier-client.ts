@@ -46,7 +46,14 @@ const VERIFIER_SYSTEM_PROMPT =
   'this finding invalid. If the finding claims a cross-file causal link (cross_file_causal_claim), you ' +
   'must locate a real call site or reference in the given context that supports the claim in ' +
   'evidence_refs — do not accept the claim on the reviewer\'s word alone. Respond with status ' +
-  '"confirmed" only if the finding holds up after this scrutiny; otherwise respond "rejected".';
+  '"confirmed" only if the finding holds up after this scrutiny; otherwise respond "rejected". ' +
+  // 实测里 12/62 条 finding 的正文自己论证完就写「不构成缺陷」，verifier 却照样
+  // 给了 confirmed —— 因为它被问的是「描述是否属实」，而那些描述确实属实。
+  // 这里把「要求对方改什么」也纳入判断。确定性防线在 arbiter 的
+  // self-refutation-gate，这条只是补强。
+  'Reject the finding outright if its own text concludes that the code is correct, or if its ' +
+  '`suggestion` field does not actually ask for a change (for example "无", "无需修改", ' +
+  '"none") — a finding that requests nothing is not a finding, however sound its analysis is.';
 
 async function requestAndValidate(input: VerifyFindingInput): Promise<VerifierConclusion> {
   let raw: unknown;

@@ -107,6 +107,26 @@ const SCOPE_CONTRACT =
   'otherwise turns a latent problem into a live one, that IS in scope — report it and say ' +
   'in `evidence` which added line causes it.';
 
+// title 是给人扫一眼用的，不是草稿纸。实测里出现过
+// 「…written verbatim into a predictable? no, mktemp temp log then catted」和
+// 「…fetched counter consistent. However FAILURE path…」这种把自问自答写进标题的
+// 情况。同一批数据里还有「先给 high、正文推翻自己、severity 不回改」——5 条 high
+// 里 3 条是这样。两件事同源，所以绑在一起说。
+const TITLE_AND_SEVERITY_CONTRACT =
+  'Write the `title` LAST, after you have settled on a conclusion. It MUST be a single ' +
+  'declarative sentence naming the defect, under 60 characters, with no question marks and ' +
+  'no "however" / "but" / "no, actually" — none of your reasoning process belongs in it. ' +
+  '`severity` must match that same final conclusion. If your analysis ends with the code ' +
+  'being correct, do not submit the finding at all, and never submit one whose `suggestion` ' +
+  'is "无" / "无需修改" / "none": a finding is a request for a change, so if you are not ' +
+  'requesting a change, there is no finding.';
+
+// 实测：同一轮里 6 条 finding 有 3 条英文 3 条中文，第 14 轮 4 条里 2 中 2 英。
+// 审阅对象是中文项目，读的人是中文使用者，混排纯粹增加阅读成本。
+const OUTPUT_LANGUAGE_CONTRACT =
+  'Write `title`, `evidence`, `impact` and `suggestion` in Simplified Chinese（简体中文）. ' +
+  'Keep identifiers, file paths, commands and quoted code verbatim in their original form.';
+
 function buildExpertSystemPrompt(agentName: string, skillBodies: string[]): string {
   return [
     `You are the "${agentName}" reviewer in a multi-expert pull request review swarm.`,
@@ -114,6 +134,8 @@ function buildExpertSystemPrompt(agentName: string, skillBodies: string[]): stri
       'Follow every checklist below.',
     LINE_NUMBER_CONTRACT,
     SCOPE_CONTRACT,
+    TITLE_AND_SEVERITY_CONTRACT,
+    OUTPUT_LANGUAGE_CONTRACT,
     ...skillBodies,
   ].join('\n\n');
 }
@@ -158,6 +180,38 @@ function fillMissingSourceAgent(raw: unknown, agentName: string): unknown {
   };
 }
 
+// 给 title 一个**确定性上界**。刻意不写进 schema：schema 校验失败会让整个 shard
+// 的响应作废、整轮判 incomplete（P6 就是这么来的），为了一个呈现问题去新增一条
+// 失败路径不划算。这里只截断，不拒绝。
+//
+// 这是兜底不是修复 —— 真正让标题变好的是 TITLE_AND_SEVERITY_CONTRACT，截断只
+// 保证「再糟也糟不到哪去」。同样只碰呈现字段，不触碰任何证据字段。
+const MAX_TITLE_CHARS = 80;
+
+function clampTitles(raw: unknown): unknown {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const obj = raw as Record<string, unknown>;
+  if (!Array.isArray(obj.candidate_findings)) return raw;
+
+  return {
+    ...obj,
+    candidate_findings: obj.candidate_findings.map((finding) => {
+      if (finding === null || typeof finding !== 'object' || Array.isArray(finding)) return finding;
+      const entry = finding as Record<string, unknown>;
+      if (typeof entry.title !== 'string') return entry;
+
+      // 先砍到首行：模型偶尔会把整段推理塞进 title。
+      const firstLine = entry.title.split('\n')[0]!.trim();
+      const clamped =
+        firstLine.length > MAX_TITLE_CHARS
+          ? `${firstLine.slice(0, MAX_TITLE_CHARS - 1)}…`
+          : firstLine;
+      // 空标题会撞 minLength: 1，那时保留原值让 schema 校验照常报错。
+      return clamped.length > 0 ? { ...entry, title: clamped } : entry;
+    }),
+  };
+}
+
 async function requestAndValidate(
   input: RunExpertInput,
   systemPrompt: string,
@@ -169,7 +223,9 @@ async function requestAndValidate(
     userPrompt,
     jsonSchema: expertOutputSchemaForModel,
   });
-  const raw = fillMissingSourceAgent(coerceStringifiedBoolean(rawResponse), input.agentName);
+  const raw = clampTitles(
+    fillMissingSourceAgent(coerceStringifiedBoolean(rawResponse), input.agentName),
+  );
 
   const result = validate<ExpertOutput>(
     'https://pr-review-swarm/schemas/expert-output.schema.json',

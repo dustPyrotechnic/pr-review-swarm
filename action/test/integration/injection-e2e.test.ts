@@ -8,6 +8,7 @@ import { validateDeterministicEvidence } from '../../src/lib/deterministic-evide
 import type { PrepareArtifact } from '../../src/entrypoints/prepare.js';
 import type { LoadedSkill } from '../../src/lib/skill-loader.js';
 import type { CandidateFinding } from '../../src/lib/expert-runner.js';
+import type { Finding } from '../../src/lib/arbiter.js';
 
 /**
  * 端到端注入测试。用一个「听话的」fake LLM：它会真的执行 prompt 里读到的注入指令
@@ -140,13 +141,15 @@ describe('prompt injection 端到端：注入不改变确定性结论', () => {
     expect(result.anyRequiredStageFailed).toBe(true);
     expect(result.findings).toEqual([]);
 
-    const { verdict } = computeVerdict({
+    const { verdict, incompleteReasons } = computeVerdict({
       coverageManifest: result.coverageManifest,
       finalFindings: result.findings,
       anyRequiredStageFailed: result.anyRequiredStageFailed,
     });
     expect(verdict).toBe('incomplete');
-    expect(computeFinalReviewEvent(verdict, result.findings.length)).not.toBe('APPROVE');
+    expect(computeFinalReviewEvent(verdict, result.findings, incompleteReasons)).not.toBe(
+      'APPROVE',
+    );
   });
 
   it('expert-output schema 没有给模型任何自报裁决的字段通道', () => {
@@ -165,9 +168,35 @@ describe('prompt injection 端到端：注入不改变确定性结论', () => {
 
   it('任何 verdict 下 final_review_event 都不是 APPROVE（注入无法制造出这个终态）', () => {
     const verdicts: Verdict[] = ['pass', 'changes_requested', 'incomplete'];
+    const makeFindings = (count: number, severity: Finding['severity']): Finding[] =>
+      Array.from({ length: count }, (_, i) => ({
+        id: `f${i}`,
+        path: 'src/foo.ts',
+        line: 1,
+        side: 'RIGHT' as const,
+        severity,
+        confidence: 'high' as const,
+        category: 'correctness',
+        title: 't',
+        evidence: 'e',
+        impact: 'i',
+        suggestion: 's',
+        introduced_by_pr: true,
+        source_agent: 'generic-correctness',
+        evidence_validation: { status: 'passed' as const },
+        verifier_conclusion: { status: 'confirmed' as const },
+      }));
+
     for (const verdict of verdicts) {
       for (const count of [0, 1, 30, 500]) {
-        expect(computeFinalReviewEvent(verdict, count)).not.toBe('APPROVE');
+        // 两种严重度都过一遍：incomplete + 全 low 会走降级分支，同样不得产出 APPROVE
+        for (const severity of ['high', 'low'] as const) {
+          for (const reasons of [[], ['hard_limit_hit'], ['any_required_stage_failed']]) {
+            expect(
+              computeFinalReviewEvent(verdict, makeFindings(count, severity), reasons),
+            ).not.toBe('APPROVE');
+          }
+        }
       }
     }
   });

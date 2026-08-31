@@ -127,7 +127,7 @@ export function buildPublishResult(input: PublishCoreInput): PublishCoreResult {
     ...(incompleteReasons.length > 0 ? { incomplete_reasons: incompleteReasons } : {}),
     review_set_id: input.reviewSetId,
     final_findings_count: input.findings.length,
-    final_review_event: computeFinalReviewEvent(verdict, input.findings.length),
+    final_review_event: computeFinalReviewEvent(verdict, input.findings, incompleteReasons),
   };
 
   return {

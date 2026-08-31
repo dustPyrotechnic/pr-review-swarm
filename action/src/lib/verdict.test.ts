@@ -15,13 +15,13 @@ function makeCoverageManifest(overrides: Partial<CoverageManifest> = {}): Covera
   };
 }
 
-function makeFinding(id: string): Finding {
+function makeFinding(id: string, severity: Finding['severity'] = 'high'): Finding {
   return {
     id,
     path: 'src/foo.ts',
     line: 1,
     side: 'RIGHT',
-    severity: 'high',
+    severity,
     confidence: 'high',
     category: 'correctness',
     title: 't',
@@ -124,27 +124,64 @@ describe('computeVerdict', () => {
 });
 
 describe('computeFinalReviewEvent', () => {
+  const high = (id: string) => makeFinding(id, 'high');
+  const low = (id: string) => makeFinding(id, 'low');
+
   it('returns COMMENT (never APPROVE) for a pass verdict — the bot never gives final merge confirmation, a human always does', () => {
-    expect(computeFinalReviewEvent('pass', 0)).toBe('COMMENT');
+    expect(computeFinalReviewEvent('pass', [])).toBe('COMMENT');
   });
 
   it('returns REQUEST_CHANGES for a changes_requested verdict', () => {
-    expect(computeFinalReviewEvent('changes_requested', 3)).toBe('REQUEST_CHANGES');
+    expect(computeFinalReviewEvent('changes_requested', [high('a'), high('b')])).toBe(
+      'REQUEST_CHANGES',
+    );
   });
 
-  it('returns REQUEST_CHANGES for an incomplete verdict that still has verified findings', () => {
-    expect(computeFinalReviewEvent('incomplete', 1)).toBe('REQUEST_CHANGES');
+  it('returns REQUEST_CHANGES for a changes_requested verdict even when every finding is low', () => {
+    // 只有 incomplete 才降级。完整跑完的一轮里，low 依然是要求改动的理由。
+    expect(computeFinalReviewEvent('changes_requested', [low('a')])).toBe('REQUEST_CHANGES');
+  });
+
+  it('returns REQUEST_CHANGES for an incomplete verdict that still has a non-low finding', () => {
+    expect(computeFinalReviewEvent('incomplete', [low('a'), high('b')], ['shards_incomplete'])).toBe(
+      'REQUEST_CHANGES',
+    );
+  });
+
+  // 2026-08-29 ios-source-learning#9 第 17 轮的真实组合：没看全 + 4 条全 low
+  // （其中 2 条还是自我否定的），却发了 REQUEST_CHANGES。
+  it('downgrades an incomplete verdict whose findings are all low to COMMENT', () => {
+    expect(
+      computeFinalReviewEvent('incomplete', [low('a'), low('b')], ['any_required_stage_failed']),
+    ).toBe('COMMENT');
+  });
+
+  // docs/AGENTS.md 硬禁令 8：截断之后不得因此不再阻塞。
+  it('does NOT downgrade when the run is incomplete because a hard limit was hit', () => {
+    expect(computeFinalReviewEvent('incomplete', [low('a')], ['hard_limit_hit'])).toBe(
+      'REQUEST_CHANGES',
+    );
+  });
+
+  it('does NOT downgrade when hard_limit_hit is one of several incomplete reasons', () => {
+    expect(
+      computeFinalReviewEvent('incomplete', [low('a')], ['shards_incomplete', 'hard_limit_hit']),
+    ).toBe('REQUEST_CHANGES');
   });
 
   it('returns none for an incomplete verdict with zero findings — nothing to request changes on', () => {
-    expect(computeFinalReviewEvent('incomplete', 0)).toBe('none');
+    expect(computeFinalReviewEvent('incomplete', [], ['any_required_stage_failed'])).toBe('none');
   });
 
   it.each(['pass', 'changes_requested', 'incomplete'] as const)(
     'never returns APPROVE for verdict=%s at any findings count — the bot never submits an approving Review',
     (verdict) => {
       for (const count of [0, 1, 5]) {
-        expect(computeFinalReviewEvent(verdict, count)).not.toBe('APPROVE');
+        const findings = Array.from({ length: count }, (_, i) => high(`f${i}`));
+        expect(computeFinalReviewEvent(verdict, findings)).not.toBe('APPROVE');
+        expect(
+          computeFinalReviewEvent(verdict, findings.map((f) => ({ ...f, severity: 'low' as const }))),
+        ).not.toBe('APPROVE');
       }
     },
   );
@@ -261,17 +298,52 @@ describe('verdict 不变式（组合穷举）', () => {
   it('任何组合下 final_review_event 都不是 APPROVE', () => {
     for (const combo of COMBINATIONS) {
       const { verdict } = computeVerdict(combo);
-      expect(computeFinalReviewEvent(verdict, combo.findingCount), combo.label).not.toBe('APPROVE');
+      expect(
+        computeFinalReviewEvent(verdict, combo.finalFindings, combo.expectedReasons),
+        combo.label,
+      ).not.toBe('APPROVE');
     }
   });
 
-  it('findings > 0 时 final_review_event 必为 REQUEST_CHANGES', () => {
+  // COMBINATIONS 的 finding 夹具都是 high 严重度，所以这条原始不变式在
+  // 「incomplete + 全 low」例外引入之后依然逐条成立 —— 例外只在全 low 时触发。
+  it('findings > 0 且含非 low 时 final_review_event 必为 REQUEST_CHANGES', () => {
     for (const combo of COMBINATIONS) {
       if (combo.findingCount === 0) continue;
-      const { verdict } = computeVerdict(combo);
-      expect(computeFinalReviewEvent(verdict, combo.findingCount), combo.label).toBe(
-        'REQUEST_CHANGES',
-      );
+      const { verdict, incompleteReasons } = computeVerdict(combo);
+      expect(
+        computeFinalReviewEvent(verdict, combo.finalFindings, incompleteReasons),
+        combo.label,
+      ).toBe('REQUEST_CHANGES');
+    }
+  });
+
+  // 例外的穷举面：把同一批组合的 finding 全换成 low，逐条核对降级只在
+  // 「incomplete 且 incompleteReasons 不含 hard_limit_hit」时发生。
+  it('全 low 时只有 incomplete 且非硬上限才降级为 COMMENT', () => {
+    for (const combo of COMBINATIONS) {
+      if (combo.findingCount === 0) continue;
+      const lowFindings = combo.finalFindings.map((f) => ({ ...f, severity: 'low' as const }));
+      const { verdict, incompleteReasons } = computeVerdict({ ...combo, finalFindings: lowFindings });
+      const event = computeFinalReviewEvent(verdict, lowFindings, incompleteReasons);
+
+      const shouldDowngrade =
+        verdict === 'incomplete' && !incompleteReasons.includes('hard_limit_hit');
+      expect(event, combo.label).toBe(shouldDowngrade ? 'COMMENT' : 'REQUEST_CHANGES');
+    }
+  });
+
+  // 硬禁令 8：命中硬上限意味着我们主动截断了分析，截断之后不得因此不再阻塞。
+  it('硬上限引起的 incomplete 即便全 low 也不降级', () => {
+    for (const combo of COMBINATIONS) {
+      if (combo.findingCount === 0) continue;
+      const { incompleteReasons } = computeVerdict(combo);
+      if (!incompleteReasons.includes('hard_limit_hit')) continue;
+      const lowFindings = combo.finalFindings.map((f) => ({ ...f, severity: 'low' as const }));
+      expect(
+        computeFinalReviewEvent('incomplete', lowFindings, incompleteReasons),
+        combo.label,
+      ).toBe('REQUEST_CHANGES');
     }
   });
 
@@ -279,7 +351,10 @@ describe('verdict 不变式（组合穷举）', () => {
     for (const combo of COMBINATIONS) {
       const { verdict } = computeVerdict(combo);
       if (verdict === 'incomplete' && combo.findingCount === 0) {
-        expect(computeFinalReviewEvent(verdict, combo.findingCount), combo.label).toBe('none');
+        expect(
+          computeFinalReviewEvent(verdict, combo.finalFindings, combo.expectedReasons),
+          combo.label,
+        ).toBe('none');
       }
     }
   });

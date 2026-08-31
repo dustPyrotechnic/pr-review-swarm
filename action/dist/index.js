@@ -38032,12 +38032,16 @@ function computeVerdict(input) {
   }
   return { verdict: "pass", incompleteReasons: [] };
 }
-function computeFinalReviewEvent(verdict, finalFindingsCount) {
+function computeFinalReviewEvent(verdict, finalFindings, incompleteReasons = []) {
   if (verdict === "pass")
     return "COMMENT";
   if (verdict === "changes_requested")
     return "REQUEST_CHANGES";
-  return finalFindingsCount > 0 ? "REQUEST_CHANGES" : "none";
+  if (finalFindings.length === 0)
+    return "none";
+  if (incompleteReasons.includes("hard_limit_hit"))
+    return "REQUEST_CHANGES";
+  return finalFindings.every((finding) => finding.severity === "low") ? "COMMENT" : "REQUEST_CHANGES";
 }
 var init_verdict = __esm({
   "src/lib/verdict.ts"() {
@@ -38342,7 +38346,7 @@ function buildPublishResult(input) {
     ...incompleteReasons.length > 0 ? { incomplete_reasons: incompleteReasons } : {},
     review_set_id: input.reviewSetId,
     final_findings_count: input.findings.length,
-    final_review_event: computeFinalReviewEvent(verdict, input.findings.length)
+    final_review_event: computeFinalReviewEvent(verdict, input.findings, incompleteReasons)
   };
   return {
     verdictSummary,

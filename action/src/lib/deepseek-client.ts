@@ -163,7 +163,6 @@ export function createDeepSeekClient(options: DeepSeekClientOptions): DeepSeekCl
           },
           body: JSON.stringify({
             model: input.model,
-            temperature: STRUCTURED_EXTRACTION_TEMPERATURE,
             messages: [
               { role: 'system', content: input.systemPrompt },
               { role: 'user', content: input.userPrompt },
